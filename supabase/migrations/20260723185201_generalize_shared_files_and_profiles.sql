@@ -1,0 +1,2 @@
+-- No-op compatibility migration.
+-- Shared-file and profile generalization is owned by 20260723090000.

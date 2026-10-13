@@ -1,0 +1,6 @@
+-- No-op compatibility migration.
+--
+-- This timestamp was generated for a second copy of the platform baseline.
+-- Keeping the version (instead of deleting it) preserves compatibility with
+-- projects whose Supabase migration history already contains it, while fresh
+-- installations use 202607230001_initial_schema.sql as the sole baseline.
