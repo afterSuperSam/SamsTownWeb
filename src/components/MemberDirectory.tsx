@@ -12,6 +12,7 @@ const initialMemberRows: Record<TownMember["group"], number> = {
   town: 1,
   friend: 1
 };
+const memberColumnCount = () => window.innerWidth <= 720 ? 2 : window.innerWidth <= 1100 ? 4 : 6;
 
 export function FeaturedMembers({ members, language }: { members: TownMember[]; language: Language }) {
   const { t } = useI18n();
@@ -34,34 +35,35 @@ export function FeaturedMembers({ members, language }: { members: TownMember[]; 
   </div>;
 }
 
-export function MemberDirectory({ members, language, linkProfiles = true }: {
+export function MemberDirectory({ members, language }: {
   members: TownMember[];
   language: Language;
-  linkProfiles?: boolean;
 }) {
-  const grouped = new Map(memberGroups.map(group => [
-    group,
-    members.filter(member => member.group === group).sort((left, right) => left.sortOrder - right.sortOrder)
-  ]));
+  const [columns, setColumns] = useState(memberColumnCount);
+
+  // 三个成员分组共用一个响应式监听，分页行数仍各自维护。
+  useEffect(() => {
+    const update = () => setColumns(memberColumnCount());
+    window.addEventListener("resize", update, { passive: true });
+    return () => window.removeEventListener("resize", update);
+  }, []);
 
   return <div className="member-groups">
-    {memberGroups.flatMap(group => {
-      const groupMembers = grouped.get(group) ?? [];
-      return groupMembers.length ? [
-        <MemberGroup group={group} members={groupMembers} language={language} linkProfiles={linkProfiles} key={group} />
-      ] : [];
+    {memberGroups.map(group => {
+      const groupMembers = members.filter(member => member.group === group)
+        .sort((left, right) => left.sortOrder - right.sortOrder);
+      return groupMembers.length ? <MemberGroup group={group} members={groupMembers} language={language} columns={columns} key={group} /> : null;
     })}
   </div>;
 }
 
-function MemberGroup({ group, members, language, linkProfiles }: {
+function MemberGroup({ group, members, language, columns }: {
   group: TownMember["group"];
   members: TownMember[];
   language: Language;
-  linkProfiles: boolean;
+  columns: number;
 }) {
   const { t } = useI18n();
-  const [columns, setColumns] = useState(() => window.innerWidth <= 720 ? 2 : window.innerWidth <= 1100 ? 4 : 6);
   const minimumRows = initialMemberRows[group];
   const [visibleRows, setVisibleRows] = useState(minimumRows);
   const visibleCount = visibleRows * columns;
@@ -69,18 +71,12 @@ function MemberGroup({ group, members, language, linkProfiles }: {
   const canCollapse = visibleRows > minimumRows;
   const gridId = `member-grid-${group}`;
 
-  useEffect(() => {
-    const update = () => setColumns(window.innerWidth <= 720 ? 2 : window.innerWidth <= 1100 ? 4 : 6);
-    window.addEventListener("resize", update, { passive: true });
-    return () => window.removeEventListener("resize", update);
-  }, []);
-
   return (
     <section className="member-group">
       <header><span>{t(`home.members.${group}`)}</span><CountUp value={members.length} /></header>
       <div className="member-grid" id={gridId} data-reveal-group>
         {members.slice(0, visibleCount).map(member => (
-          <MemberCard member={member} language={language} linkProfile={linkProfiles} key={member.id} />
+          <MemberCard member={member} language={language} key={member.id} />
         ))}
       </div>
       {hasMore || canCollapse ? <div className="member-pagination">
@@ -95,18 +91,14 @@ function MemberGroup({ group, members, language, linkProfiles }: {
   );
 }
 
-function MemberCard({ member, language, linkProfile }: {
+function MemberCard({ member, language }: {
   member: TownMember;
   language: Language;
-  linkProfile: boolean;
 }) {
-  const content = <>
+  return <article className={`member-card ${member.variant}`}>
     <MemberAvatar member={member} />
     <div><h3>{member.username}</h3><p>{language === "zh-CN" ? member.roleZh : member.roleEn}</p></div>
-  </>;
-  return linkProfile
-    ? <a className={`member-card ${member.variant}`} href={nameMcUrl(member.username)} target="_blank" rel="noreferrer">{content}</a>
-    : <article className={`member-card ${member.variant}`}>{content}</article>;
+  </article>;
 }
 
 export function MemberAvatar({ member }: { member: TownMember }) {
@@ -120,5 +112,3 @@ export function MemberAvatar({ member }: { member: TownMember }) {
     </div>}
   </>;
 }
-
-const nameMcUrl = (username: string) => `https://namemc.com/profile/${encodeURIComponent(username)}`;

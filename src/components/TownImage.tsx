@@ -1,4 +1,4 @@
-import { useMemo, type ImgHTMLAttributes } from "react";
+import type { ImgHTMLAttributes } from "react";
 
 const isRemote = (path: string) => /^https?:\/\//i.test(path);
 const resolvePublicUrl = (path: string) => isRemote(path)
@@ -13,30 +13,21 @@ function resolveTownImageSource(path: string): string {
   return resolvePublicUrl(normalized);
 }
 
-// Resolve and decode critical media before the page leaves its loading state.
-// Failure is non-blocking: the real image element still owns its fallback UI.
+// 关键图片先解码再结束加载；超时或图片失效不阻塞页面。
 export async function preloadTownImage(path: string): Promise<void> {
-  if (typeof Image === "undefined" || !path) return;
+  if (!path) return;
   const image = new Image();
   image.src = resolveTownImageSource(path);
+  let timeout = 0;
   try {
-    const decoded = typeof image.decode === "function" ? image.decode() : image.complete
-      ? Promise.resolve()
-      : new Promise<void>(resolve => {
-          image.onload = () => resolve();
-          image.onerror = () => resolve();
-        });
-    let timeout = 0;
-    try {
-      await Promise.race([
-        decoded,
-        new Promise<void>(resolve => { timeout = window.setTimeout(resolve, 4_000); })
-      ]);
-    } finally {
-      window.clearTimeout(timeout);
-    }
+    await Promise.race([
+      image.decode(),
+      new Promise<void>(resolve => { timeout = window.setTimeout(resolve, 4_000); })
+    ]);
   } catch {
-    // Rendering proceeds even when the browser cannot pre-decode the asset.
+    // 实际图片仍由 img 元素展示，预解码失败不阻止渲染。
+  } finally {
+    window.clearTimeout(timeout);
   }
 }
 
@@ -44,9 +35,7 @@ interface TownImageProps extends Omit<ImgHTMLAttributes<HTMLImageElement>, "src"
   source: string;
 }
 
-// Only the two known historical media folders use PNG identifiers backed by
-// optimized JPG files. New local PNG uploads must keep their real path.
+// 历史媒体标识映射为优化图片，新上传的 PNG 保留原路径。
 export function TownImage({ source, ...props }: TownImageProps) {
-  const resolvedSource = useMemo(() => resolveTownImageSource(source), [source]);
-  return <img {...props} src={resolvedSource} />;
+  return <img {...props} src={resolveTownImageSource(source)} />;
 }

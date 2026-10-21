@@ -33,6 +33,14 @@ export const config = z.object({
   MAP_UPLOAD_MAX_BYTES: z.coerce.number().int().positive().default(52_428_800),
   MAP_UPLOAD_RATE_MAX: z.coerce.number().int().positive().default(3),
   BILIBILI_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+  BLOG_API_URL: z.string().url().refine(value => {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password;
+  }, "BLOG_API_URL must be an HTTPS URL without credentials").default("https://blog.yingwutown.top/api/public/site-card.json"),
+  BLOG_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+  BLOG_RESPONSE_MAX_BYTES: z.coerce.number().int().positive().default(1_048_576),
+  BLOG_CACHE_MS: z.coerce.number().int().min(1_000).default(300_000),
+  BLOG_HOME_POST_LIMIT: z.coerce.number().int().min(1).max(3).default(3),
   ACCOUNT_CLEANUP_INTERVAL_MS: z.coerce.number().int().min(30_000).default(300_000),
   ANALYTICS_IP_PEPPER: z.string().min(32).optional()
 }).superRefine((values, context) => {

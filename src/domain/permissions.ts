@@ -4,27 +4,20 @@ export type Capability =
   | "account"
   | "admin"
   | "map:view"
-  | "map:claim"
-  | "map:manage"
-  | "forum:view"
-  | "forum:write";
+  | "map:project"
+  | "map:manage";
 
 const capabilities: Record<AppRole, ReadonlySet<Capability>> = {
-  viewer: new Set(["account", "map:view", "forum:view"]),
-  member: new Set(["account", "map:view", "map:claim", "forum:view", "forum:write"]),
-  admin: new Set(["account", "map:view", "map:claim", "map:manage", "forum:view", "forum:write"]),
-  owner: new Set(["account", "admin", "map:view", "map:claim", "map:manage", "forum:view", "forum:write"])
+  member: new Set(["account", "map:view", "map:project"]),
+  owner: new Set(["account", "admin", "map:view", "map:project", "map:manage"])
 };
 
-export const roleLabels: Record<AppRole, string> = {
-  viewer: "Viewer",
-  member: "Member",
-  admin: "Admin",
-  owner: "Owner"
-};
+export const roleLabels = {
+  member: "app.roles.member",
+  owner: "app.roles.owner"
+} as const satisfies Record<AppRole, string>;
 
-// Permission checks live behind one interface so UI guards and actions cannot
-// drift when Admin receives distinct capabilities in a future release.
+// 统一游客、成员和管理的界面权限；写入仍由服务端和数据库授权。
 export function can(role: AppRole | null | undefined, capability: Capability): boolean {
-  return Boolean(role && capabilities[role].has(capability));
+  return capability === "map:view" || Boolean(role && capabilities[role]?.has(capability));
 }

@@ -1,19 +1,14 @@
 import type { User } from "@supabase/supabase-js";
-import { createHash } from "node:crypto";
-import { normalizeUsername } from "./authCredentials.js";
+import { randomUUID } from "node:crypto";
 import { supabaseAdmin } from "./supabaseAdmin.js";
 
-function internalAccountEmail(username: string): string {
-  const normalized = normalizeUsername(username);
-  return `${createHash("sha256").update(normalized).digest("hex")}@accounts.yingwu.invalid`;
-}
-
+// 内部认证标识独立于用户名，改名后不会继续占用旧名字。
 export async function createInternalAuthUser(
   username: string,
   password: string
 ): Promise<User> {
   const created = await supabaseAdmin.auth.admin.createUser({
-    email: internalAccountEmail(username),
+    email: `${randomUUID()}@accounts.yingwu.invalid`,
     password,
     email_confirm: true,
     app_metadata: { yingwu_trusted_provisioning: true },

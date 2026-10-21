@@ -1,7 +1,4 @@
-/**
- * Bridges an image-led hero into the following page surface.
- * Theme-specific colors live in the global tokens so every page stays aligned.
- */
+// 透明留白延续页面纸纹，不再额外叠加色带。
 export function HeroTransition() {
   return <div className="hero-transition" aria-hidden="true" />;
 }

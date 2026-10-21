@@ -1,6 +1,6 @@
 {
   "name": "yingwu-town-web",
-  "version": "2.0.0",
+  "version": "2.2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -45,7 +45,6 @@
     "concurrently": "10.0.4",
     "eslint": "10.8.1",
     "eslint-plugin-react-hooks": "7.1.1",
-    "jsdom": "^29.1.1",
     "tsx": "4.20.5",
     "typescript": "5.9.2",
     "typescript-eslint": "8.67.0",

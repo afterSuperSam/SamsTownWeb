@@ -4,7 +4,8 @@ import { isSupabaseConfigured, supabase } from "../lib/supabase";
 import { sessionAwareApiRequest } from "./apiClient";
 
 export type PageViewSeries = "totalViews" | "authenticatedViews";
-export type OperationCategory = "map_claim" | "map_marker";
+export type OperationCategory = "map_project" | "map_marker";
+const operationCategories: OperationCategory[] = ["map_project", "map_marker"];
 export type OperationAction = "add" | "update" | "delete";
 
 interface DailyPageViews {
@@ -86,7 +87,7 @@ export async function getOperationLogs(
   let query = supabase
     .from("audit_logs")
     .select("id,actor_id,action,target_type,target_id,details,created_at")
-    .in("target_type", ["map_claim", "map_marker"])
+    .in("target_type", operationCategories)
     .gte("created_at", new Date(Date.now() - 7 * 86_400_000).toISOString())
     .order("created_at", { ascending: false })
     .limit(250);
@@ -96,7 +97,7 @@ export async function getOperationLogs(
   if (error) throw error;
   const logs = (data ?? []).flatMap(row => {
     if (!["add", "update", "delete"].includes(row.action)) return [];
-    if (!["map_claim", "map_marker"].includes(row.target_type)) return [];
+    if (!operationCategories.includes(row.target_type as OperationCategory)) return [];
     const details = row.details && typeof row.details === "object" && !Array.isArray(row.details)
       ? row.details as Record<string, Json | undefined>
       : {};
@@ -151,7 +152,7 @@ export function groupOperationLogs(logs: OperationLog[]): OperationLogGroup[] {
   }
 
   const rootTables: Record<OperationCategory, string> = {
-    map_claim: "map_claims",
+    map_project: "map_claims",
     map_marker: "map_markers"
   };
   return [...groups.values()].map(group => {

@@ -93,7 +93,7 @@ export function AccountPage() {
           <span className="eyebrow">{t("account.player.title")}</span>
           <h2>{linkedMember?.username ?? profile?.username ?? ""}</h2>
           <div className="account-identity-details">
-            <span><small>{t("app.role")}</small><strong>{profile?.role ? roleLabels[profile.role] : "—"}</strong></span>
+            <span><small>{t("app.role")}</small><strong>{t(profile?.role ? roleLabels[profile.role] : "app.roles.guest")}</strong></span>
             <span><small>{t("account.player.minecraft")}</small><strong>{linkedMember?.username ?? profile?.username ?? "—"}</strong></span>
             {linkedMember && (linkedMember.roleZh || linkedMember.roleEn) ? <span><small>{t("account.player.position")}</small><strong>{language === "zh-CN" ? linkedMember.roleZh : linkedMember.roleEn}</strong></span> : null}
           </div>

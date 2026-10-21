@@ -6,32 +6,40 @@ async function request<T>(path: string, init: RequestInit, sessionMode: "none" |
   const headers = new Headers(init.headers);
   if (init.body && !(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
   if (sessionMode !== "none") {
-    const { data } = await supabase.auth.getSession();
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw error;
     if (sessionMode === "required" && !data.session) throw new Error("error.session");
     if (data.session) headers.set("Authorization", `Bearer ${data.session.access_token}`);
   }
   let response: Response;
+  let payload: unknown;
   const controller = new AbortController();
   const abortFromCaller = () => controller.abort(init.signal?.reason);
   init.signal?.addEventListener("abort", abortFromCaller, { once: true });
   if (init.signal?.aborted) abortFromCaller();
-  const timeout = window.setTimeout(() => controller.abort("timeout"), env.VITE_API_TIMEOUT_MS);
+  const timeout = globalThis.setTimeout(() => controller.abort("timeout"), env.VITE_API_TIMEOUT_MS);
   try {
     response = await fetch(`${env.VITE_API_URL}${path}`, { ...init, headers, signal: controller.signal });
+    if (response.status !== 204) {
+      payload = await response.json().catch(error => {
+        if (response.ok || controller.signal.aborted) throw error;
+        return null;
+      });
+    }
   } catch {
     throw new Error(controller.signal.reason === "timeout" ? "error.apiTimeout" : "error.apiUnavailable");
   } finally {
-    window.clearTimeout(timeout);
+    globalThis.clearTimeout(timeout);
     init.signal?.removeEventListener("abort", abortFromCaller);
   }
   if (!response.ok) {
-    const payload = await response.json().catch(() => null) as { code?: string; details?: unknown } | null;
-    const error = new Error(payload?.code ?? "error.generic") as Error & { details?: unknown };
-    error.details = payload?.details;
+    const failure = payload && typeof payload === "object" ? payload as { code?: unknown; details?: unknown } : null;
+    const error = new Error(typeof failure?.code === "string" ? failure.code : "error.generic") as Error & { details?: unknown };
+    error.details = failure?.details;
     throw error;
   }
   if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
+  return payload as T;
 }
 
 export function publicApiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {

@@ -1,10 +1,11 @@
 export type Language = "zh-CN" | "en";
-export type AppRole = "owner" | "admin" | "member" | "viewer";
-export type TownImageArea = "hero" | "story" | "gallery" | "join" | "history" | "mapHero" | "forumHero" | "other";
-export type TownImageLayout = "standard" | "wide" | "tall";
+export type AppRole = "owner" | "member";
+export const townImageAreas = ["hero", "story", "gallery", "join", "history", "mapHero", "other"] as const;
+export type TownImageArea = typeof townImageAreas[number];
+export const townImageLayouts = ["standard", "wide", "tall"] as const;
+export type TownImageLayout = typeof townImageLayouts[number];
 type TownMediaType = "image" | "bilibili";
 type TownMemberGroup = "primary" | "town" | "friend";
-export type ForumPostKind = "task" | "anecdote" | "event";
 
 export interface LocalizedText {
   "zh-CN": string;
@@ -43,38 +44,16 @@ export interface HistoryEvent {
   bodyZh: string;
   bodyEn: string;
   imageId: string | null;
-  showOnHome: boolean;
   sortOrder: number;
 }
 
-type TownAnnouncementKind = "announcement" | "affair";
-
-export interface TownAnnouncement {
-  id: string;
-  kind: TownAnnouncementKind;
-  titleZh: string;
-  titleEn: string;
-  subtitleZh: string;
-  subtitleEn: string;
-  bodyZh: string;
-  bodyEn: string;
-  imageId: string | null;
-  visible: boolean;
-  sortOrder: number;
-}
-
-export interface ForumPost {
-  id: string;
+export interface BlogPost {
   title: string;
-  kind: ForumPostKind;
-  body: string;
-  authorId: string | null;
-  authorUsername: string;
-  createdAt: string;
-  updatedAt: string;
+  url: string;
+  coverUrl: string | null;
+  description: string;
+  publishedAt: string;
 }
-
-export type ForumPostDraft = Pick<ForumPost, "title" | "kind" | "body">;
 
 export interface FaqItem {
   id: string;

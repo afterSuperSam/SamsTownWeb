@@ -1,5 +1,4 @@
 import OpenSeadragon from "openseadragon";
-import { Building2, Cog, MapPin } from "lucide-react";
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../../i18n/I18nContext";
 import { getTileRequest, subscribeToTileAuthentication } from "../data/mapRepository";
@@ -7,45 +6,34 @@ import {
   cellKey,
   buildCellPaths,
   clampChunk,
-  findNearestMarker,
   pixelToChunk,
   rectangleCells,
   splitClaimRegions,
   toggleCells
 } from "../domain/claimGeometry";
-import { CHUNK_SIZE, type ChunkCoordinate, type MapClaim, type MapMarker, type MapOccupancy, type SelectionTool, type TownMap } from "../domain/mapTypes";
+import { CHUNK_SIZE, type ChunkCoordinate, type MapProject, type SelectionTool, type TownMap } from "../domain/mapTypes";
 import { atlasConfig, boundedViewport, containsCell, type ChunkBounds } from "../domain/atlasConfig";
 import { MinecraftAvatar } from "./MinecraftAvatar";
 
-const MARKER_ART_WIDTH = 52;
-const MARKER_SCREEN_WIDTH = 42;
-
 export interface MapViewportHandle {
   reset: () => void;
-  focusClaim: (claim: MapClaim) => void;
-  focusMarker: (marker: MapMarker) => void;
+  focusProject: (project: MapProject) => void;
 }
 
 interface MapViewportProps {
   map: TownMap;
-  claims: MapClaim[];
-  markers: MapMarker[];
+  projects: MapProject[];
   selection: ChunkCoordinate[];
   tool: SelectionTool;
   subtract: boolean;
-  activeClaimId: string | null;
-  editableClaimId: string | null;
-  markerPlacement: boolean;
+  activeProjectId: string | null;
+  editableProjectId: string | null;
   editable: boolean;
   loadedBounds: ChunkBounds | null;
-  occupancy: MapOccupancy | null;
-  overview: boolean;
   onViewportChange: (bounds: ChunkBounds | null) => void;
   onSelectionChange: (cells: ChunkCoordinate[]) => void;
-  onClaimHover: (id: string | null) => void;
-  onClaimSelect: (claim: MapClaim) => void;
-  onMarkerSelect: (marker: MapMarker) => void;
-  onMarkerPlace: (point: { x: number; y: number }) => void;
+  onProjectHover: (id: string | null) => void;
+  onProjectSelect: (project: MapProject) => void;
 }
 
 export const MapViewport = forwardRef<MapViewportHandle, MapViewportProps>(function MapViewport(props, ref) {
@@ -53,8 +41,6 @@ export const MapViewport = forwardRef<MapViewportHandle, MapViewportProps>(funct
   const hostRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<SVGSVGElement>(null);
   const viewerRef = useRef<OpenSeadragon.Viewer | null>(null);
-  const markerScaleRef = useRef(1);
-  const markerElementsRef = useRef<SVGGElement[]>([]);
   const labelElementsRef = useRef<SVGTextElement[]>([]);
   const imageScaleRef = useRef(1);
   const propsRef = useRef(props);
@@ -62,39 +48,38 @@ export const MapViewport = forwardRef<MapViewportHandle, MapViewportProps>(funct
   const pointStartRef = useRef<{ x: number; y: number } | null>(null);
   const [preview, setPreview] = useState<ChunkCoordinate[]>([]);
   const [hoverCell, setHoverCell] = useState<ChunkCoordinate | null>(null);
-  const [hoverClaimId, setHoverClaimId] = useState<string | null>(null);
-  const [hoverMarkerId, setHoverMarkerId] = useState<string | null>(null);
+  const [hoverProjectId, setHoverProjectId] = useState<string | null>(null);
   const [keyboardCell, setKeyboardCell] = useState<ChunkCoordinate | null>(null);
-  const [zoomBand, setZoomBand] = useState(1);
   const [loadError, setLoadError] = useState(false);
   propsRef.current = props;
 
-  const claimByCell = useMemo(() => {
-    const index = new Map<string, MapClaim>();
-    props.claims.forEach(claim => claim.cells.forEach(cell => index.set(cellKey(cell), claim)));
+  const projectByCell = useMemo(() => {
+    const index = new Map<string, MapProject>();
+    props.projects.forEach(project => project.cells.forEach(cell => index.set(cellKey(cell), project)));
     return index;
-  }, [props.claims]);
-  const claimByCellRef = useRef(claimByCell);
-  claimByCellRef.current = claimByCell;
-  const hoveredClaim = props.claims.find(claim => claim.id === hoverClaimId) ?? null;
-  const hoveredMarker = props.markers.find(marker => marker.id === hoverMarkerId) ?? null;
+  }, [props.projects]);
+  const projectByCellRef = useRef(projectByCell);
+  projectByCellRef.current = projectByCell;
+  const hoveredProject = props.projects.find(project => project.id === hoverProjectId) ?? null;
   const selectionPaths = useMemo(() => buildCellPaths(props.selection), [props.selection]);
   const previewPaths = useMemo(() => buildCellPaths(preview), [preview]);
+  // 目录重读只更新元数据，底图来源或尺寸变化时才重建画布。
+  const tileSource = useMemo(() => ({
+    id: props.map.id, tileRevision: props.map.tileRevision, storagePrefix: props.map.storagePrefix,
+    imageWidth: props.map.imageWidth, imageHeight: props.map.imageHeight,
+    tileSize: props.map.tileSize, maxLevel: props.map.maxLevel
+  }), [props.map.id, props.map.tileRevision, props.map.storagePrefix,
+    props.map.imageWidth, props.map.imageHeight, props.map.tileSize, props.map.maxLevel]);
 
   function activateCell(cell: ChunkCoordinate) {
     const current = propsRef.current;
-    if (!containsCell(current.loadedBounds, cell)) return;
-    if (current.markerPlacement) {
-      if (!current.editable) return;
-      current.onMarkerPlace({ x: (cell.column + .5) * CHUNK_SIZE, y: (cell.row + .5) * CHUNK_SIZE });
-      return;
-    }
-    const claim = claimByCellRef.current.get(cellKey(cell));
-    if (claim?.id === current.editableClaimId) {
-      if (!current.editable) return;
+    const project = projectByCellRef.current.get(cellKey(cell));
+    if (!project && !containsCell(current.loadedBounds, cell)) return;
+    if (project?.id === current.editableProjectId) {
+      if (!current.editable || !containsCell(current.loadedBounds, cell)) return;
       current.onSelectionChange(toggleCells(current.selection, [cell], current.subtract));
-    } else if (claim) {
-      current.onClaimSelect(claim);
+    } else if (project) {
+      current.onProjectSelect(project);
     } else if (!current.editable) {
       return;
     } else {
@@ -128,13 +113,14 @@ export const MapViewport = forwardRef<MapViewportHandle, MapViewportProps>(funct
     let unsubscribeAuthentication: () => void = () => {};
     setLoadError(false);
     setKeyboardCell(null);
-    void getTileRequest(props.map).then(tileRequest => {
+    void getTileRequest(tileSource).then(tileRequest => {
       if (disposed) return;
       const viewer = OpenSeadragon({
         element: host,
         showNavigationControl: false,
         animationTime: 0.8,
         blendTime: 0.15,
+        imageSmoothingEnabled: false,
         maxZoomPixelRatio: 8,
         visibilityRatio: 0.55,
         constrainDuringPan: true,
@@ -143,11 +129,11 @@ export const MapViewport = forwardRef<MapViewportHandle, MapViewportProps>(funct
         loadTilesWithAjax: true,
         ajaxHeaders: tileRequest.headers,
         tileSources: {
-          width: props.map.imageWidth,
-          height: props.map.imageHeight,
-          tileSize: props.map.tileSize,
+          width: tileSource.imageWidth,
+          height: tileSource.imageHeight,
+          tileSize: tileSource.tileSize,
           minLevel: 0,
-          maxLevel: props.map.maxLevel,
+          maxLevel: tileSource.maxLevel,
           getTileUrl: (level: number, x: number, y: number) => `${tileRequest.base}/${level}/${x}_${y}.webp`
         }
       });
@@ -155,51 +141,36 @@ export const MapViewport = forwardRef<MapViewportHandle, MapViewportProps>(funct
       unsubscribeAuthentication = subscribeToTileAuthentication(headers => {
         viewer.setAjaxHeaders(headers, true);
       });
-      // Keep the React-owned SVG in place. Moving it into OpenSeadragon's DOM
-      // would make React unmount from the wrong parent. Its bounds follow the
-      // image on every viewport animation instead.
+      // React 持有的覆盖层跟随底图，不交由地图控件移动节点。
       const updateOverlay = () => {
         const topLeft = viewer.viewport.pixelFromPoint(viewer.viewport.imageToViewportCoordinates(0, 0), true);
         const bottomRight = viewer.viewport.pixelFromPoint(
-          viewer.viewport.imageToViewportCoordinates(props.map.imageWidth, props.map.imageHeight),
+          viewer.viewport.imageToViewportCoordinates(tileSource.imageWidth, tileSource.imageHeight),
           true
         );
         overlay.style.left = `${topLeft.x}px`;
         overlay.style.top = `${topLeft.y}px`;
         overlay.style.width = `${bottomRight.x - topLeft.x}px`;
         overlay.style.height = `${bottomRight.y - topLeft.y}px`;
-        const imageZoom = viewer.viewport.viewportToImageZoom(viewer.viewport.getZoom(true));
-        const renderedImageScale = Math.max((bottomRight.x - topLeft.x) / props.map.imageWidth, .001);
+        const renderedImageScale = Math.max((bottomRight.x - topLeft.x) / tileSource.imageWidth, .001);
         imageScaleRef.current = renderedImageScale;
-        // The diamond artwork is 52 image units wide. Normalize it to a fixed
-        // 42 CSS pixels using the measured rendered image scale; this avoids
-        // exaggerated growth at low OpenSeadragon zoom levels.
-        const markerScale = MARKER_SCREEN_WIDTH / (MARKER_ART_WIDTH * renderedImageScale);
-        markerScaleRef.current = markerScale;
-        // Marker artwork is counter-scaled against the image so it keeps a
-        // stable screen size at every OpenSeadragon zoom level.
-        markerElementsRef.current.forEach(marker => {
-          marker.setAttribute("transform", `scale(${markerScale})`);
-        });
         labelElementsRef.current.forEach(label => {
           label.style.fontSize = `${atlasConfig.claimLabelScreenSize / renderedImageScale}px`;
         });
-        const nextBand = imageZoom < atlasConfig.exactImageZoom ? 0 : imageZoom < 1.2 ? 1 : 2;
-        setZoomBand(current => current === nextBand ? current : nextBand);
       };
+      viewer.addHandler("animation", updateOverlay);
+      viewer.addHandler("resize", updateOverlay);
+      // 编辑仍限制在已放大的有界窗口；全图边界与名称独立显示。
       const reportViewport = () => {
         const imageZoom = viewer.viewport.viewportToImageZoom(viewer.viewport.getZoom(true));
         const rect = viewer.viewport.viewportToImageRectangle(viewer.viewport.getBounds(true));
-        const next = imageZoom < atlasConfig.exactImageZoom ? null : boundedViewport({
+        propsRef.current.onViewportChange(imageZoom < atlasConfig.exactImageZoom ? null : boundedViewport({
           minColumn: Math.floor(rect.x / CHUNK_SIZE), minRow: Math.floor(rect.y / CHUNK_SIZE),
           maxColumn: Math.ceil((rect.x + rect.width) / CHUNK_SIZE) - 1,
           maxRow: Math.ceil((rect.y + rect.height) / CHUNK_SIZE) - 1
-        }, Math.ceil(props.map.imageWidth / CHUNK_SIZE), Math.ceil(props.map.imageHeight / CHUNK_SIZE));
-        propsRef.current.onViewportChange(next);
+        }, Math.ceil(tileSource.imageWidth / CHUNK_SIZE), Math.ceil(tileSource.imageHeight / CHUNK_SIZE)));
       };
-      viewer.addHandler("animation", updateOverlay);
       viewer.addHandler("animation-finish", reportViewport);
-      viewer.addHandler("resize", updateOverlay);
       viewer.addHandler("resize", reportViewport);
       viewer.addHandler("open", () => {
         setLoadError(false);
@@ -217,23 +188,14 @@ export const MapViewport = forwardRef<MapViewportHandle, MapViewportProps>(funct
       viewerRef.current?.destroy();
       viewerRef.current = null;
     };
-  }, [props.map]);
+  }, [tileSource]);
 
   useEffect(() => {
     labelElementsRef.current = overlayRef.current ? [...overlayRef.current.querySelectorAll<SVGTextElement>(".map-claim-label")] : [];
     labelElementsRef.current.forEach(label => {
       label.style.fontSize = `${atlasConfig.claimLabelScreenSize / imageScaleRef.current}px`;
     });
-  }, [props.claims, zoomBand]);
-
-  useEffect(() => {
-    markerElementsRef.current = overlayRef.current
-      ? [...overlayRef.current.querySelectorAll<SVGGElement>(".map-marker-visual")]
-      : [];
-    markerElementsRef.current.forEach(marker => {
-      marker.setAttribute("transform", `scale(${markerScaleRef.current})`);
-    });
-  }, [props.markers, zoomBand]);
+  }, [props.projects]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -251,13 +213,9 @@ export const MapViewport = forwardRef<MapViewportHandle, MapViewportProps>(funct
     const pointerDown = (event: PointerEvent) => {
       if (event.button !== 0) return;
       const located = imagePoint(event);
-      if (!located || !containsCell(propsRef.current.loadedBounds, located.cell)) return;
+      if (!located) return;
       pointStartRef.current = { x: event.clientX, y: event.clientY };
-      if (propsRef.current.markerPlacement && propsRef.current.editable) {
-        event.stopPropagation();
-        return;
-      }
-      if (propsRef.current.editable && (propsRef.current.tool === "rectangle" || propsRef.current.tool === "brush")) {
+      if (propsRef.current.editable && containsCell(propsRef.current.loadedBounds, located.cell) && (propsRef.current.tool === "rectangle" || propsRef.current.tool === "brush")) {
         event.preventDefault();
         event.stopPropagation();
         host.setPointerCapture(event.pointerId);
@@ -271,19 +229,15 @@ export const MapViewport = forwardRef<MapViewportHandle, MapViewportProps>(funct
       const located = imagePoint(event);
       if (!located) {
         setHoverCell(null);
-        setHoverClaimId(null);
-        setHoverMarkerId(null);
-        propsRef.current.onClaimHover(null);
+        setHoverProjectId(null);
+        propsRef.current.onProjectHover(null);
         return;
       }
       setHoverCell(current => current?.column === located.cell.column && current.row === located.cell.row ? current : located.cell);
-      const claim = claimByCellRef.current.get(cellKey(located.cell));
-      const nextHoverId = claim?.id ?? null;
-      setHoverClaimId(nextHoverId);
-      propsRef.current.onClaimHover(nextHoverId);
-      const markerRadius = (MARKER_SCREEN_WIDTH / 2 + 8) / Math.max(imageScaleRef.current, .001);
-      const marker = findNearestMarker(propsRef.current.markers, located.point, markerRadius);
-      setHoverMarkerId(marker?.id ?? null);
+      const project = projectByCellRef.current.get(cellKey(located.cell));
+      const nextHoverId = project?.id ?? null;
+      setHoverProjectId(nextHoverId);
+      propsRef.current.onProjectHover(nextHoverId);
       const drawing = drawingRef.current;
       if (!drawing || drawing.pointerId !== event.pointerId || !containsCell(propsRef.current.loadedBounds, located.cell)
         || !containsCell(propsRef.current.loadedBounds, drawing.start)) return;
@@ -316,21 +270,11 @@ export const MapViewport = forwardRef<MapViewportHandle, MapViewportProps>(funct
         if (host.hasPointerCapture(event.pointerId)) host.releasePointerCapture(event.pointerId);
         return;
       }
-      if (!located || !pointStartRef.current || !containsCell(propsRef.current.loadedBounds, located.cell)) return;
+      if (!located || !pointStartRef.current) return;
       const moved = Math.hypot(event.clientX - pointStartRef.current.x, event.clientY - pointStartRef.current.y);
       pointStartRef.current = null;
       if (moved > 5) return;
-      if (propsRef.current.markerPlacement && propsRef.current.editable) {
-        propsRef.current.onMarkerPlace({ x: located.point.x, y: located.point.y });
-        return;
-      }
-      const markerRadius = (MARKER_SCREEN_WIDTH / 2 + 6) / Math.max(imageScaleRef.current, .001);
-      const marker = findNearestMarker(propsRef.current.markers, located.point, markerRadius);
-      if (marker) {
-        propsRef.current.onMarkerSelect(marker);
-        return;
-      }
-      if (propsRef.current.tool === "point") {
+      if (!propsRef.current.editable || propsRef.current.tool === "point") {
         activateCell(located.cell);
       }
     };
@@ -345,9 +289,8 @@ export const MapViewport = forwardRef<MapViewportHandle, MapViewportProps>(funct
     };
     const pointerLeave = () => {
       setHoverCell(null);
-      setHoverClaimId(null);
-      setHoverMarkerId(null);
-      propsRef.current.onClaimHover(null);
+      setHoverProjectId(null);
+      propsRef.current.onProjectHover(null);
     };
     host.addEventListener("pointerdown", pointerDown, true);
     host.addEventListener("pointermove", pointerMove, true);
@@ -365,16 +308,16 @@ export const MapViewport = forwardRef<MapViewportHandle, MapViewportProps>(funct
 
   useImperativeHandle(ref, () => ({
     reset: () => viewerRef.current?.viewport.goHome(true),
-    focusClaim: claim => {
-      if (claim.bounds) {
-        const bounds = claim.bounds;
+    focusProject: project => {
+      if (project.bounds) {
+        const bounds = project.bounds;
         focusImageRect(bounds.minColumn * CHUNK_SIZE, bounds.minRow * CHUNK_SIZE,
           (bounds.maxColumn - bounds.minColumn + 1) * CHUNK_SIZE,
           (bounds.maxRow - bounds.minRow + 1) * CHUNK_SIZE);
         return;
       }
-      if (!claim.cells.length) return;
-      const bounds = claim.cells.reduce((current, cell) => ({
+      if (!project.cells.length) return;
+      const bounds = project.cells.reduce((current, cell) => ({
         minColumn: Math.min(current.minColumn, cell.column), minRow: Math.min(current.minRow, cell.row),
         maxColumn: Math.max(current.maxColumn, cell.column), maxRow: Math.max(current.maxRow, cell.row)
       }), { minColumn: Infinity, minRow: Infinity, maxColumn: -Infinity, maxRow: -Infinity });
@@ -383,8 +326,7 @@ export const MapViewport = forwardRef<MapViewportHandle, MapViewportProps>(funct
         (bounds.maxColumn - bounds.minColumn + 1) * CHUNK_SIZE,
         (bounds.maxRow - bounds.minRow + 1) * CHUNK_SIZE
       );
-    },
-    focusMarker: marker => focusImageRect(marker.pixelX - 32, marker.pixelY - 32, 64, 64)
+    }
   }));
 
   function focusImageRect(x: number, y: number, width: number, height: number) {
@@ -396,7 +338,7 @@ export const MapViewport = forwardRef<MapViewportHandle, MapViewportProps>(funct
 
   return (
     <div
-      className={`map-viewport ${props.markerPlacement ? "is-placing-marker" : ""}`}
+      className="map-viewport"
       tabIndex={0}
       role="application"
       aria-label={t("map.viewport.instructions")}
@@ -415,36 +357,16 @@ export const MapViewport = forwardRef<MapViewportHandle, MapViewportProps>(funct
     >
       <div className="map-osd-host" ref={hostRef} />
       <svg ref={overlayRef} className="map-overlay" viewBox={`0 0 ${props.map.imageWidth} ${props.map.imageHeight}`} aria-hidden="true">
-        {(props.overview || !props.loadedBounds) && props.occupancy ? <g className="map-occupancy-overview" fill="var(--amber)" pointerEvents="none">
-          {props.occupancy.blocks.map(block => <rect key={`${block.column}:${block.row}`}
-            x={block.column * props.occupancy!.blockSize * CHUNK_SIZE} y={block.row * props.occupancy!.blockSize * CHUNK_SIZE}
-            width={props.occupancy!.blockSize * CHUNK_SIZE} height={props.occupancy!.blockSize * CHUNK_SIZE}
-            opacity={Math.max(.18, Math.min(.8, block.count / props.occupancy!.blockSize ** 2))} />)}
-        </g> : null}
-        {props.claims.map(claim => <ClaimShape claim={claim} highlighted={claim.id === props.activeClaimId || claim.id === hoverClaimId} showLabels={zoomBand >= 1} key={claim.id} />)}
+        {props.projects.map(project => <ProjectShape project={project} highlighted={project.id === props.activeProjectId || project.id === hoverProjectId} key={project.id} />)}
         <SelectionShape paths={selectionPaths} />
         <SelectionShape paths={previewPaths} preview />
         {keyboardCell ? <rect className="map-keyboard-cell" x={keyboardCell.column * CHUNK_SIZE} y={keyboardCell.row * CHUNK_SIZE} width={CHUNK_SIZE} height={CHUNK_SIZE} /> : null}
-        {props.markers.map(marker => <MarkerShape marker={marker} scale={markerScaleRef.current} key={marker.id} />)}
-        <path className="map-unloaded-mask" pointerEvents="none" fill="var(--bg)" fillOpacity=".45" fillRule="evenodd"
-          d={`M0 0H${props.map.imageWidth}V${props.map.imageHeight}H0Z${props.loadedBounds
-            ? `M${props.loadedBounds.minColumn * CHUNK_SIZE} ${props.loadedBounds.minRow * CHUNK_SIZE}H${(props.loadedBounds.maxColumn + 1) * CHUNK_SIZE}V${(props.loadedBounds.maxRow + 1) * CHUNK_SIZE}H${props.loadedBounds.minColumn * CHUNK_SIZE}Z` : ""}`} />
       </svg>
-      {props.overview || !props.loadedBounds ? <div className="map-tile-error map-unloaded-notice" role="status">{t("map.viewport.overview")}</div> : null}
       {hoverCell ? <div className="map-chunk-id">R{hoverCell.row + 1} · C{hoverCell.column + 1}</div> : null}
-      {hoveredMarker ? (
-        <aside className="map-hover-card map-marker-hover-card">
-          <MarkerTypeIcon type={hoveredMarker.iconType} />
-          <div className="map-hover-copy">
-            <strong>{hoveredMarker.name}</strong>
-            <span>{t(`map.marker.${hoveredMarker.iconType}`)}</span>
-            {hoveredMarker.description ? <p>{hoveredMarker.description}</p> : null}
-          </div>
-        </aside>
-      ) : hoveredClaim ? (
+      {hoveredProject ? (
         <aside className="map-hover-card">
-          <span className="map-hover-avatar"><MinecraftAvatar username={hoveredClaim.minecraftUsername} size={64} alt="" /></span>
-          <div className="map-hover-copy"><strong>{hoveredClaim.projectName}</strong><span>{hoveredClaim.minecraftUsername}</span><small>{t(`map.status.${hoveredClaim.status}`)}</small>{hoveredClaim.description ? <p>{hoveredClaim.description}</p> : null}</div>
+          <span className="map-hover-avatar"><MinecraftAvatar username={hoveredProject.minecraftUsername} size={64} alt="" /></span>
+          <div className="map-hover-copy"><strong>{hoveredProject.projectName}</strong><span>{hoveredProject.minecraftUsername}</span>{hoveredProject.description ? <p>{hoveredProject.description}</p> : null}</div>
         </aside>
       ) : null}
       {loadError ? <div className="map-tile-error">{t("error.generic")}</div> : null}
@@ -452,42 +374,19 @@ export const MapViewport = forwardRef<MapViewportHandle, MapViewportProps>(funct
   );
 });
 
-function ClaimShape({ claim, highlighted, showLabels }: { claim: MapClaim; highlighted: boolean; showLabels: boolean }) {
-  const regions = useMemo(() => splitClaimRegions(claim.cells), [claim.cells]);
-  const paths = useMemo(() => buildCellPaths(claim.cells), [claim.cells]);
-  return <g className={`map-claim-shape ${highlighted ? "highlighted" : ""} ${claim.partial ? "partial" : ""}`} style={{ "--claim-color": claim.color } as React.CSSProperties}>
+function ProjectShape({ project, highlighted }: { project: MapProject; highlighted: boolean }) {
+  const regions = useMemo(() => splitClaimRegions(project.cells), [project.cells]);
+  const paths = useMemo(() => buildCellPaths(project.cells), [project.cells]);
+  return <g className={`map-claim-shape ${highlighted ? "highlighted" : ""}`} style={{ "--claim-color": project.color } as React.CSSProperties}>
     <path className="map-claim-fill" d={paths.fill} />
-    {!claim.partial ? <path className="map-claim-edge" d={paths.edge} /> : null}
-    {showLabels && !claim.partial ? regions.map(region => <text className="map-claim-label" x={(region.label.column + .5) * CHUNK_SIZE} y={(region.label.row + .5) * CHUNK_SIZE} key={`label-${cellKey(region.label)}`}>{claim.projectName}</text>) : null}
+    <path className="map-claim-edge" d={paths.edge} />
+    {regions.map(region => <text className="map-claim-label" x={(region.label.column + .5) * CHUNK_SIZE} y={(region.label.row + .5) * CHUNK_SIZE} key={`label-${cellKey(region.label)}`}>{project.projectName}</text>)}
   </g>;
 }
-
 function SelectionShape({ paths, preview = false }: { paths: ReturnType<typeof buildCellPaths>; preview?: boolean }) {
   if (!paths.fill) return null;
   return <g className={`map-selection-shape ${preview ? "preview" : ""}`}>
     <path className="map-selection-fill" d={paths.fill} />
     <path className="map-selection-edge" d={paths.edge} />
   </g>;
-}
-
-function MarkerShape({ marker, scale }: { marker: MapMarker; scale: number }) {
-  const iconPath = marker.iconType === "building"
-    ? "M-8 5V-4L0-11 8-4V5H3V-1H-3V5Z"
-    : marker.iconType === "machine"
-      ? "M-8-8H8V8H-8ZM-3-3H3V3H-3Z"
-      : "M-8 0H8M0-8V8";
-  return <g className="map-marker-shape" transform={`translate(${marker.pixelX} ${marker.pixelY})`} style={{ "--claim-color": marker.color } as React.CSSProperties}>
-    <g className="map-marker-visual" transform={`scale(${scale})`}>
-      <path className="map-marker-halo" d="M-10-46H10V-42H18V-34H26V-10H18V-2H10V6H-10V-2H-18V-10H-26V-34H-18V-42H-10Z" />
-      <path className="map-marker-diamond" d="M-8-42H8V-38H16V-30H24V-14H16V-6H8V2H-8V-6H-16V-14H-24V-30H-16V-38H-8Z" />
-      <path className="map-marker-facet light" d="M-8-34H8V-30H16V-22H8V-18H-8V-22H-16V-30H-8Z" />
-      <path className="map-marker-facet shade" d="M-16-14H16V-8H8V0H-8V-8H-16Z" />
-      <path className="map-marker-icon" d={iconPath} transform="translate(0 -19)" />
-    </g>
-  </g>;
-}
-
-function MarkerTypeIcon({ type }: { type: MapMarker["iconType"] }) {
-  const Icon = type === "building" ? Building2 : type === "machine" ? Cog : MapPin;
-  return <span className="map-marker-type-icon" aria-hidden="true"><Icon size={24} /></span>;
 }

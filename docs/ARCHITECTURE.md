@@ -1,102 +1,83 @@
-# 接口与架构
+# 架构与审美
 
-## 数据入口
+## 代码边界
 
-页面负责交互和布局；数据读写集中在 `services/` 和各功能的 repository。保留 Fastify + Supabase 双入口，不增加转发每个数据库操作的 API 层。
+```text
+浏览器 ── Nginx ── React 静态文件
+               └─ /api、/health ── Fastify ── Supabase Auth / Storage
+React repository ── Supabase Data API / RPC / Realtime（RLS）
+```
 
-| 模块 | 入口 | 职责 |
+| 目录 | 职责 |
+| --- | --- |
+| `src/pages` | 首页、档案、地图、账号、后台的组合与交互 |
+| `src/components` | 按钮、对话框、通知、加载、媒体、成员与装饰 |
+| `src/features` | 地图和后台功能域；`data` 管数据，`domain` 管纯逻辑 |
+| `src/services` | 登录、账号管理、站点资料、统计与统一 HTTP 请求 |
+| `src/state`、`i18n`、`theme` | 会话、语言与深浅主题 Context |
+| `src/styles` | 设计变量、组件样式、照片墙样式 |
+| `server` | Fastify 入口、鉴权、HTTP 路由、上传与清理队列 |
+| `supabase/migrations` | 按时间顺序保存的 schema、RLS、RPC 和 Storage policy |
+| `scripts`、`tests`、`e2e` | 独立运维工具与现有验证 |
+| `images/optimized`、`public` | 随构建发布的优化图片、图标与视频 |
+
+状态使用 Context 与页面自身状态，不引入额外状态框架。页面不直接拼数据库查询；表字段映射集中于 repository，JSON RPC 在数据边界校验。
+
+## 核心数据
+
+- `profiles`：用户名、角色与首次改密状态；账号由 Supabase Auth 保存。
+- `site_content`：双语文案覆盖与公开联系方式。
+- `town_members`、`town_history`、`town_images`、`faq_items`：社区内容。
+- 博客文章不存入 Supabase；Fastify 从 SamsBlog 的公开 JSON 接口读取，校验、去重、按发布时间降序取 3 条并缓存。
+- `town_maps`、`map_claims`、`map_claim_cells`：地图、项目及其区块范围；保留已有数据表名，不另建重复模型。
+- `site-images` 为公开媒体；私有 `town-maps` 保存原图与切片，可见地图的切片由 policy 放行。
+
+地图术语：Pixel 对应一个游戏方块；Chunk 是 `16×16` Pixel；Project 是一个项目及其区块集合；Region 是其中四向相邻的一片。建造者是单人展示资料，ownerId 是拥有编辑权的站内账号。项目没有状态或单独可见性，标记功能已移除。
+
+全图项目区块按序分页读取，全部就绪后展示；侧栏独立分页，详情与编辑通过 `get_map_claim_detail` 读取完整项目。底图使用 OpenSeadragon 瓦片缩放，关闭平滑插值；目录刷新与同用户重复认证不重建画布，同一列表的后台重验保留旧内容。未使用区块不存记录。
+
+## 数据入口与权限
+
+| 入口 | 功能 |
+| --- | --- |
+| `authService` / `/api/auth/*` | 用户名登录、会话、改密与本人资料 |
+| `adminApi` / `/api/accounts*` | 管理创建和维护账号 |
+| `siteRepository` | 社区内容及媒体，管理原子保存有序集合 |
+| `getBlogPosts` / `/api/blog/posts` | 独立加载博客文章，跨站请求由 Fastify 转发 |
+| `mapRepository` / `mapApi` | 地图读取、项目 RPC、`/api/maps*` 上传与管理 |
+| `webDataRepository` | 访问统计和操作日志 |
+
+HTTP JSON 使用 camelCase；数据库 snake_case 在 repository 转换。错误返回 `{ code: "error.*", details? }`；未知错误只在内部记录，浏览器通过翻译表显示产品提示。`GET /health` 返回 `{ ok: true, service: "yingwu-api" }`。
+
+前端 `can()` 控制展示，Fastify 校验 token 与当前 Profile，数据库 RLS／RPC 执行最终授权。角色取自可信资料，不接受客户端提交的权限。临时密码门禁、限流、上传校验、异步竞态隔离和外部删除补偿都是业务完整性的一部分。
+
+游客为无会话状态；应用角色仅 `member`（成员）与 `owner`（管理）。成员可管理自己的项目；管理可管理全部项目和后台。旧 viewer/admin 账号在迁移中归并为 member，PostgreSQL 历史 enum 值保留，但 Profile CHECK 禁止再次写入。公开注册保持关闭。
+
+浏览器只读 `profiles`，改名通过受控 RPC 且必须完成首次改密，账号管理统一经过 Fastify。新账号的内部 Auth 邮箱使用独立随机标识；改密后重新签发会话。当前单进程内串行处理改密、重置与删号准备，排队后重新鉴权；这不替代多实例部署所需的数据库并发控制。
+
+数据库类型由 `src/lib/database.types.ts` 提供。修改 schema 后按 [DEPLOY](DEPLOY.md) 的迁移流程更新类型；旧迁移不改写、不删除。未接入的游戏控制表不向浏览器开放。
+
+## 审美
+
+暖棕、典雅、克制的 Minecraft 社区档案感。照片与内容为主体，琥珀色用于引导，不使用霓虹或第二套组件风格。
+
+| 变量 | 深色 | 浅色 |
 | --- | --- | --- |
-| 会话和本人资料 | `services/authService.ts` | 登录、退出、改密、本人资料 |
-| 账号管理 | `services/adminApi.ts` | Owner 账号增删改查 |
-| 站点内容 | `services/siteRepository.ts` | 内容、成员、历史、FAQ、公告、媒体 |
-| 论坛 | `features/forum/forumRepository.ts` | 发帖、编辑、删除、分页 |
-| 地图查询和认领 | `features/atlas/data/mapRepository.ts` | 空间 RPC、列表、完整详情、认领和标记 |
-| 地图文件管理 | `features/atlas/data/mapApi.ts` | 上传、替换、元数据修改和删除 |
-| 统计与操作记录 | `services/webDataRepository.ts` | 统计读取、访问记录、操作日志 |
+| `--bg` | `#211c18` | `#eee2cb` |
+| `--surface` | `#2a241f` | `#f7edd9` |
+| `--text` | `#f0e4d1` | `#3a2a1d` |
+| `--amber` | `#d38d42` | `#8a4d20` |
 
-`apiClient.ts` 统一请求头、会话、取消、超时和错误码。公开请求、可选会话请求、必须登录的请求共用一个实现。JSON 自动设置 Content-Type；FormData 由浏览器生成 boundary。
+变量统一在 `styles/global.css` 的 `:root`。正文使用 Noto Sans SC／系统字体，一级标题使用 Playfair Display，天数通过 `--counter-font` 使用 Georgia 粗体，页脚版本号通过 `--font-handwriting` 使用 SamsBlog 的 Segoe Print／楷体／微软雅黑字体栈；中文不使用像素字体。文字继承主题阴影，浅色使用深棕投影而非白色高光，媒体标题保留专用阴影；导航和签名光晕使用独立亮色变量。大圆角、柔和阴影和留白形成层级。
 
-## HTTP 契约
-
-- JSON 使用 camelCase；数据库 snake_case 在 repository 内转换。
-- 成功直接返回业务对象或数组；简单命令返回 `{ ok: true }`；统计写入返回 `204`。
-- 创建返回 `201`，读取和更新返回 `200`。
-- 错误返回 `{ code: "error.*", details?: unknown }`。参数错误的 details 只包含字段路径和校验类别，不包含输入值。
-- `400` 参数错误，`401` 会话无效，`403` 权限或改密门禁，`404` 资源缺失，`409` 状态冲突，`413` 上传超限，`429` 限流；未知异常返回 `500 / error.generic`。
-- 权限读取数据库当前 Profile，不相信浏览器提交的角色。
-
-| 方法 / 路径 | 权限 | 请求 | 返回 |
-| --- | --- | --- | --- |
-| `GET /health` | 公开 | 无 | `{ ok: true, service: "yingwu-api" }` |
-| `POST /api/auth/sign-in` | 公开、限流 | `{ username, password }` | `{ accessToken, refreshToken }` |
-| `POST /api/auth/change-password` | 认证、限流；允许临时密码会话 | `{ password, confirmation }` | `{ ok: true }` |
-| `GET /api/accounts` | Owner | 无 | `Account[]` |
-| `POST /api/accounts` | Owner | `{ username, password, role }` | `Account`，role 仅 viewer/member/admin |
-| `PATCH /api/accounts/:id` | Owner | `{ role?, temporaryPassword? }`，至少一项 | `{ ok: true }` |
-| `DELETE /api/accounts/:id` | Owner | UUID 路径参数 | `{ ok: true }`，Auth 删除失败进入队列 |
-| `POST /api/analytics/view` | 公开、限流 | 无；可带 Bearer token | `204` |
-| `POST /api/bilibili/resolve` | Owner、限流 | `{ input }` | `{ bvid, title, thumbnailUrl, author, durationSeconds, watchUrl }` |
-| `POST /api/maps` | Admin+、限流 | multipart：file、name、description、shortLabel、visible、sortOrder | `TownMap`，`201` |
-| `PATCH /api/maps/:id` | Admin+ | `{ name, description?, shortLabel?, visible?, sortOrder? }` | `TownMap` |
-| `PUT /api/maps/:id/image` | Admin+、限流 | multipart：file、clearExisting | `TownMap` |
-| `DELETE /api/maps/:id` | Admin+ | `{ confirmName }` | `{ ok: true }` |
-
-`Account = { id, username, role, mustChangePassword, createdAt }`，不含 QQ 字段。`TownMap` 字段定义在 `mapTypes.ts`，包含地图 ID、名称、描述、尺寸、切片 revision／prefix、可见性、排序和时间。
-
-旧 `/api/auth/register`、`/api/auth/qq/*`、`/api/profile/qq*` 全部退役，返回 `404 / error.notFound`。前端没有注册模式或绑定入口。
-
-## 权限
-
-| 能力 | 匿名 | Viewer | Member | Admin | Owner |
-| --- | --- | --- | --- | --- | --- |
-| 公开站点和可见地图 | 是 | 是 | 是 | 是 | 是 |
-| 查看论坛 | 否 | 是 | 是 | 是 | 是 |
-| 发帖、编辑本人帖子；管理本人认领 | 否 | 否 | 是 | 是 | 是 |
-| 管理地图、所有认领和标记 | 否 | 否 | 否 | 是 | 是 |
-| 内容、账号与统计后台 | 否 | 否 | 否 | 否 | 是 |
-
-临时密码账号仅允许登录和修改密码。新账号由 Owner 经 Service Role 创建，触发器检查不可由用户编辑的 `app_metadata.yingwu_trusted_provisioning`，拒绝绕过后台公开注册。前端 `can()` 管显示，Fastify 守卫管 HTTP，数据库 RLS / RPC 管真实数据权限。
-
-## Supabase 契约
-
-普通结构化表查询使用 `database.types.ts`；JSON RPC 在 repository 的唯一入口校验，不再另写字段缺失的兼容分支。
-
-| RPC | 输入 / 返回职责 |
-| --- | --- |
-| `resolve_profile_id` | 服务端按规范化用户名解析账号 ID |
-| `update_own_username` | 当前账号修改用户名 |
-| `replace_town_members`、`replace_town_history`、`replace_town_announcements`、`replace_faq_items` | Owner 原子替换对应有序集合 |
-| `list_forum_posts` | kind、limit、offset、authorId；返回帖子分页 |
-| `get_map_occupancy` | mapId、blockSize；返回有界占用概览 |
-| `get_map_viewport` | mapId、ChunkBounds、area、offset、limit；返回精确格子或标记页、总数和 revision |
-| `list_map_claim_summaries` | 全图筛选和分页；返回数量、定位边界和筛选选项 |
-| `get_map_claim_detail` | mapId、claimId；返回完整认领格，编辑前使用 |
-| `save_map_claim` | 项目、归属、颜色、状态、完整 cells；返回 `{ claimId, conflicts }` |
-| `queue_town_image_deletion`、`queue_own_storage_cleanup` | 媒体删除及上传失败补偿 |
-| `prepare_account_deletion` | Owner 核对账号、转移持有对象并登记 Auth 删除队列 |
-
-精确参数名以 `database.types.ts` 为准。地图分页保留总数、revision 和完整详情校验，避免把部分数据当空闲区域或在保存时误删未加载格子；权限切换后清除私有缓存。
-
-## 共享界面模块
-
-| 模块 | 统一行为 |
-| --- | --- |
-| `Button.tsx` | Button / IconButton / SaveButton：默认类型、图标、忙碌状态、保存文案 |
-| `Dialog.tsx` | 原生 dialog：顶层显示、焦点、Escape、遮罩关闭；DialogActions 和 ConfirmDialog 共用按钮 |
-| `SelectField.tsx` | 原生 select：键盘、移动端选择和统一样式 |
-| `RetryNotice.tsx` | Notice / RetryNotice：错误／成功语义、错误翻译和重试 |
-| `OrderedCollection.tsx` | useOrdering / OrderControls：有序集合及媒体共用拖拽、上下移动 |
-| `TownImage` / `TownMedia` / `MediaFigure` | 图片来源、视频播放、标题和图注 |
-| `TerrainLoading.tsx` | 页面与区域加载状态 |
-
-业务页面保留自身表单状态，展示复用上述模块。视觉变量集中在 CSS `:root`；不得为同一保存、取消、确认或选择行为复制另一套组件。
-
-## 数据与产物
-
-- `profiles` 保留账号资料；QQ 私有表和专属 RPC 由新增迁移删除。
-- `site-images` 展示公开媒体；`town-maps` 原图私有，可见地图生成瓦片按 policy 读取。
-- Storage / Auth 失败补偿保留：外部删除不能与 PostgreSQL 形成一个事务。
-- `dist/` 为前端产物；`dist-server/` 每次 API 构建重建且不包含测试。
-- 游戏控制预留表未接入当前产品，仍不向 anon/authenticated 开放；不新增任何游戏命令接口。
-
-数据库领域术语见 [CONTEXT.md](../CONTEXT.md)。迁移顺序和生产未执行项见 [README](../README.md#部署与数据库)。
+- **按钮**：复用 `Button`／`IconButton`／`SaveButton`，无装饰外框；用底色、聚光、微缩放、按压和键盘焦点表达状态。危险操作保留危险色与确认。
+- **表单**：输入、复选框和文件按钮共用主题样式；`SelectField` 用顶层弹出菜单统一选项外观，支持搜索、方向键、Escape 与焦点恢复；`Dialog` 统一模态隔离及动作区。
+- **图片**：`TownImage`／`TownMedia`／`MediaFigure` 共用加载和说明，悬浮或聚焦时出现备注；照片墙保留适合其流动布局的交互。
+- **背景媒体**：首页、档案与地图 Hero 共用 `global.css` 的 `--hero-mask` 椭圆渐变，无额外 SVG 曲线。Join、成员视频等普通背景使用 `--media-mask-top/bottom` 水平渐隐。蒙版放在稳定外壳而非缩放图片上，透明边缘直接露出主题背景；`HeroTransition` 只提供留白，不叠色带。
+- **背景**：纸纹伪元素位于 `body`，覆盖公开页、后台、账号与错误页；首屏加载复用同一组样式，普通页面不重复叠层。装饰位于内容后方，不覆盖照片或地图；`--paper-*` 管强度和周期。不再使用 DiamondGlows。
+- **目录与签名**：`SectionNavigation` 供首页和档案共用；只强调当前或聚焦项，其他竖线按距离递减，带阴影的无框提示文字整句从右向左轻弹。`FooterSignature` 使用 SVG 遮罩和原生动画，离开重进重播，后台标签页暂停，卸载取消。参数集中在 `domain/visualConfig.ts` 并经 schema 校验。
+- **动效**：`--ease-out: cubic-bezier(.22,1,.36,1)`；优先 transform／opacity。复用 `useScrollReveal`，不为同一元素重复建立观察器。局部聚光直接写 CSS 变量，不触发 React 重渲染。
+- **首页头图**：背景静止，不缩放或漂移；标题、简介和按钮整体居中。英文眉题以常规字体显示为 `YINGWU TOWN`，主标题在 72–144px 间缩放。保留逐字渐入，不使用弹跳；底部为左右对称的柔边椭圆。页脚版本号为 16px，右侧依次为个人资料和私域纯文字入口，手机端独立成行。
+- **主题切换**：`ThemeContext` 用原生 View Transition 快照和圆形软边蒙版从点击处揭开新主题；参数由 `visualConfig.themeRipple` 校验。切换期间暂停颜色过渡，完成后清理临时样式；键盘、减少动效和不支持的浏览器直接切换。顶部按钮无底框，仍保留可访问名称和键盘焦点。
+- **加载**：地形动画仅在当前文档首次进入首页出现；页面切换淡入，外部博客文章独立加载，不阻塞首屏。
+- **无障碍与小屏**：保留键盘焦点、ARIA 和触控操作；适配 `prefers-reduced-motion`、深浅主题与 320px 宽度，不出现页面横向溢出。

@@ -12,5 +12,5 @@
   root.dataset.theme = theme;
   root.style.colorScheme = theme;
   document.querySelector('meta[name="theme-color"]')
-    ?.setAttribute("content", theme === "light" ? "#f4efe7" : "#0b0b0d");
+    ?.setAttribute("content", theme === "light" ? "#eee2cb" : "#211c18");
 })();

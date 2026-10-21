@@ -6,6 +6,7 @@ import { ConfirmDialog } from "../../components/Dialog";
 import { SelectField } from "../../components/SelectField";
 import { TownMedia } from "../../components/TownMedia";
 import type { TownImage, TownImageArea, TownImageLayout } from "../../domain/types";
+import { townImageAreas as areas, townImageLayouts as layouts } from "../../domain/types";
 import { getErrorTranslationKey } from "../../i18n/errors";
 import { useI18n } from "../../i18n/I18nContext";
 import type { TranslationKey } from "../../i18n/translations";
@@ -22,9 +23,7 @@ interface ImageManagerProps {
   onNotice: (message: string, tone?: "success" | "error") => void;
 }
 
-const areas: TownImageArea[] = ["hero", "story", "gallery", "join", "history", "mapHero", "forumHero", "other"];
 const videoAreas: TownImageArea[] = ["story", "gallery", "history", "other"];
-const layouts: TownImageLayout[] = ["standard", "wide", "tall"];
 const areaTranslationKeys: Record<TownImageArea, TranslationKey> = {
   hero: "admin.images.area.hero",
   story: "admin.images.area.story",
@@ -32,7 +31,6 @@ const areaTranslationKeys: Record<TownImageArea, TranslationKey> = {
   join: "admin.images.area.join",
   history: "admin.images.area.history",
   mapHero: "admin.images.area.mapHero",
-  forumHero: "admin.images.area.forumHero",
   other: "admin.images.area.other"
 };
 const layoutTranslationKeys: Record<TownImageLayout, TranslationKey> = {

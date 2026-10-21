@@ -6,15 +6,14 @@ export const atlasConfig = z.object({
   listPageSize: z.number().int().min(1).max(100),
   exactCellLimit: z.number().int().min(1).max(16384),
   bufferChunks: z.number().int().min(0).max(16),
-  overviewAxisBlocks: z.number().int().min(1).max(32),
-  refreshDelay: z.number().int().min(0).max(1000),
   exactImageZoom: z.number().positive(),
+  refreshDelay: z.number().int().min(0).max(1000),
   claimLabelScreenSize: z.number().int().min(10).max(24),
   noticeDuration: z.number().int().positive()
 }).parse({
-  pageSize: 1000, listPageSize: 30, exactCellLimit: 16384,
-  bufferChunks: 4, overviewAxisBlocks: 32, refreshDelay: 120,
-  exactImageZoom: .55, claimLabelScreenSize: 13, noticeDuration: 3600
+  pageSize: 1000, listPageSize: 30, refreshDelay: 120,
+  exactCellLimit: 16384, bufferChunks: 4, exactImageZoom: .55,
+  claimLabelScreenSize: 13, noticeDuration: 3600
 });
 
 export interface ChunkBounds {
@@ -29,11 +28,7 @@ export function containsCell(bounds: ChunkBounds | null, cell: { column: number;
     && cell.row >= bounds.minRow && cell.row <= bounds.maxRow);
 }
 
-export function overlapsBounds(left: ChunkBounds, right: ChunkBounds) {
-  return left.minColumn <= right.maxColumn && left.maxColumn >= right.minColumn
-    && left.minRow <= right.maxRow && left.maxRow >= right.minRow;
-}
-
+// 仅限制编辑窗口的大小，不裁剪全图认领的显示。
 export function boundedViewport(bounds: ChunkBounds, columns: number, rows: number): ChunkBounds | null {
   const buffered = {
     minColumn: Math.max(0, bounds.minColumn - atlasConfig.bufferChunks),

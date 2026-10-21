@@ -142,47 +142,6 @@ export type Database = {
         }
         Relationships: []
       }
-      forum_posts: {
-        Row: {
-          author_id: string | null
-          author_username: string
-          body: string
-          created_at: string
-          id: string
-          kind: string
-          title: string
-          updated_at: string
-        }
-        Insert: {
-          author_id?: string | null
-          author_username?: string
-          body: string
-          created_at?: string
-          id?: string
-          kind: string
-          title: string
-          updated_at?: string
-        }
-        Update: {
-          author_id?: string | null
-          author_username?: string
-          body?: string
-          created_at?: string
-          id?: string
-          kind?: string
-          title?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "forum_posts_author_id_fkey"
-            columns: ["author_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       game_servers: {
         Row: {
           created_at: string
@@ -274,7 +233,6 @@ export type Database = {
           minecraft_username: string
           owner_id: string
           project_name: string
-          status: string
           updated_at: string
         }
         Insert: {
@@ -286,7 +244,6 @@ export type Database = {
           minecraft_username: string
           owner_id: string
           project_name: string
-          status?: string
           updated_at?: string
         }
         Update: {
@@ -298,7 +255,6 @@ export type Database = {
           minecraft_username?: string
           owner_id?: string
           project_name?: string
-          status?: string
           updated_at?: string
         }
         Relationships: [
@@ -314,63 +270,6 @@ export type Database = {
             columns: ["owner_id"]
             isOneToOne: false
             referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      map_markers: {
-        Row: {
-          color: string
-          created_at: string
-          created_by: string
-          description: string
-          icon_type: string
-          id: string
-          map_id: string
-          name: string
-          pixel_x: number
-          pixel_y: number
-          updated_at: string
-        }
-        Insert: {
-          color: string
-          created_at?: string
-          created_by: string
-          description?: string
-          icon_type: string
-          id?: string
-          map_id: string
-          name: string
-          pixel_x: number
-          pixel_y: number
-          updated_at?: string
-        }
-        Update: {
-          color?: string
-          created_at?: string
-          created_by?: string
-          description?: string
-          icon_type?: string
-          id?: string
-          map_id?: string
-          name?: string
-          pixel_x?: number
-          pixel_y?: number
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "map_markers_created_by_fkey"
-            columns: ["created_by"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "map_markers_map_id_fkey"
-            columns: ["map_id"]
-            isOneToOne: false
-            referencedRelation: "town_maps"
             referencedColumns: ["id"]
           },
         ]
@@ -653,62 +552,6 @@ export type Database = {
           },
         ]
       }
-      town_announcements: {
-        Row: {
-          body_en: string
-          body_zh: string
-          created_at: string
-          id: string
-          image_id: string | null
-          is_visible: boolean
-          kind: string
-          sort_order: number
-          subtitle_en: string
-          subtitle_zh: string
-          title_en: string
-          title_zh: string
-          updated_at: string
-        }
-        Insert: {
-          body_en?: string
-          body_zh?: string
-          created_at?: string
-          id?: string
-          image_id?: string | null
-          is_visible?: boolean
-          kind?: string
-          sort_order?: number
-          subtitle_en?: string
-          subtitle_zh?: string
-          title_en?: string
-          title_zh: string
-          updated_at?: string
-        }
-        Update: {
-          body_en?: string
-          body_zh?: string
-          created_at?: string
-          id?: string
-          image_id?: string | null
-          is_visible?: boolean
-          kind?: string
-          sort_order?: number
-          subtitle_en?: string
-          subtitle_zh?: string
-          title_en?: string
-          title_zh?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "town_announcements_image_id_fkey"
-            columns: ["image_id"]
-            isOneToOne: false
-            referencedRelation: "town_images"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       town_images: {
         Row: {
           alt_en: string
@@ -898,43 +741,6 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      commit_town_map_image: {
-        Args: {
-          p_clear_existing: boolean
-          p_image_height: number
-          p_image_width: number
-          p_map_id: string
-          p_max_level: number
-          p_original_path: string
-          p_storage_prefix: string
-          p_tile_revision: string
-          p_tile_size: number
-        }
-        Returns: {
-          created_at: string
-          created_by: string
-          description: string
-          id: string
-          image_height: number
-          image_width: number
-          is_visible: boolean
-          max_level: number
-          name: string
-          original_path: string
-          short_label: string
-          sort_order: number
-          storage_prefix: string
-          tile_revision: string
-          tile_size: number
-          updated_at: string
-        }
-        SetofOptions: {
-          from: "*"
-          to: "town_maps"
-          isOneToOne: true
-          isSetofReturn: false
-        }
-      }
       commit_town_map_image_v2: {
         Args: {
           p_clear_existing: boolean
@@ -973,59 +779,19 @@ export type Database = {
         Args: { p_days?: number }
         Returns: Json
       }
-      // 按待生产应用的 202610040002 迁移手工同步；应用后仍需 CLI 重新生成。
+      // 按待应用的 20261020041649 迁移同步；部署后用 CLI 再生成核对。
       get_map_claim_detail: {
         Args: { p_map_id: string; p_claim_id: string }
-        Returns: Json
-      }
-      get_map_occupancy: {
-        Args: { p_map_id: string; p_block_size: number }
-        Returns: Json
-      }
-      get_map_viewport: {
-        Args: {
-          p_map_id: string
-          p_min_column: number
-          p_min_row: number
-          p_max_column: number
-          p_max_row: number
-          p_offset?: number
-          p_limit?: number
-          p_area?: string
-        }
         Returns: Json
       }
       list_map_claim_summaries: {
         Args: {
           p_map_id: string
           p_query?: string
-          p_status?: string
-          p_member?: string
-          p_color?: string
-          p_mine?: boolean
           p_offset?: number
           p_limit?: number
-          p_kind?: string
         }
         Returns: Json
-      }
-      list_forum_posts: {
-        Args: {
-          p_author_id?: string | null
-          p_kind?: string | null
-          p_limit?: number
-          p_offset?: number
-        }
-        Returns: {
-          author_id: string | null
-          author_username: string
-          body: string
-          created_at: string
-          id: string
-          kind: string
-          title: string
-          updated_at: string
-        }[]
       }
       list_map_owners: {
         Args: never
@@ -1059,7 +825,6 @@ export type Database = {
         Returns: undefined
       }
       replace_faq_items: { Args: { items: Json }; Returns: undefined }
-      replace_town_announcements: { Args: { items: Json }; Returns: undefined }
       replace_town_history: { Args: { items: Json }; Returns: undefined }
       replace_town_members: { Args: { items: Json }; Returns: undefined }
       resolve_profile_id: { Args: { login_username: string }; Returns: string }
@@ -1073,7 +838,6 @@ export type Database = {
           p_minecraft_username: string
           p_owner_id?: string
           p_project_name: string
-          p_status: string
         }
         Returns: Json
       }

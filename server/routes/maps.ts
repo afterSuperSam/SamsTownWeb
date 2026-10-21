@@ -83,10 +83,9 @@ async function parseMapMultipart(request: FastifyRequest): Promise<{ fields: Rec
       if (part.type === "field") {
         fields[part.fieldname] = String(part.value ?? "");
       } else {
-        if (image) throw invalidMapError();
-        if (!allowedImageTypes.has(part.mimetype)) throw invalidMapError();
+        if (image || !allowedImageTypes.has(part.mimetype)) throw invalidMapError();
         image = await stageMapUpload(part.file, part.filename, part.mimetype);
-        if (part.file.truncated) throw fileSizeError();
+        if (part.file.truncated) throw Object.assign(new Error("error.mapFileTooLarge"), { statusCode: 413 });
       }
     }
     if (!image) throw invalidMapError();
@@ -100,13 +99,5 @@ async function parseMapMultipart(request: FastifyRequest): Promise<{ fields: Rec
 const allowedImageTypes = new Set(["image/png", "image/jpeg", "image/webp", "image/tiff"]);
 
 function invalidMapError() {
-  const error = new Error("error.invalidMapImage") as Error & { statusCode?: number };
-  error.statusCode = 400;
-  return error;
-}
-
-function fileSizeError() {
-  const error = new Error("error.mapFileTooLarge") as Error & { statusCode?: number };
-  error.statusCode = 413;
-  return error;
+  return Object.assign(new Error("error.invalidMapImage"), { statusCode: 400 });
 }

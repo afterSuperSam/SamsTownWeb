@@ -12,17 +12,18 @@ import {
 import type { FastifyBaseLogger } from "fastify";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ upload: vi.fn(), remove: vi.fn(), queue: vi.fn() }));
+const mocks = vi.hoisted(() => ({ upload: vi.fn(), remove: vi.fn(), queue: vi.fn(), from: vi.fn(), list: vi.fn() }));
 vi.mock("node:fs/promises", async importOriginal => ({
   ...await importOriginal<typeof import("node:fs/promises")>(),
   readFile: vi.fn(async () => Buffer.from("image"))
 }));
 vi.mock("../supabaseAdmin.js", () => ({
-  supabaseAdmin: { storage: { from: () => ({ upload: mocks.upload, remove: mocks.remove }) } }
+  supabaseAdmin: { from: mocks.from, storage: { from: () => ({ upload: mocks.upload, remove: mocks.remove }) } }
 }));
-vi.mock("../storageCleanupQueue.js", () => ({ queueStorageCleanup: mocks.queue }));
+vi.mock("../storageCleanupQueue.js", () => ({ queueStorageCleanup: mocks.queue, listStorageFiles: mocks.list }));
 
 const { uploadMapAssets } = await import("./mapStorage.js");
+const { deleteTownMap } = await import("./mapService.js");
 const logger = { error: vi.fn() } as unknown as FastifyBaseLogger;
 const image = { path: "source.png", directory: "staged", filename: "source.png", mimetype: "image/png" };
 const tiles = { width: 16, height: 16, tileSize: 256, maxLevel: 4, tileRoot: "tiles",
@@ -54,6 +55,30 @@ describe("地图上传失败补偿", () => {
     mocks.remove.mockResolvedValue({ error: new Error("Storage removal failed") });
     mocks.queue.mockRejectedValue(new Error("Queue unavailable"));
     await expect(uploadMapAssets(image, tiles, "map/revision", "png", logger)).rejects.toThrow("Queue unavailable");
+  });
+});
+
+describe("地图删除并发", () => {
+  it("读取确认信息后底图发生变化时，不删除新版本和文件", async () => {
+    mocks.list.mockResolvedValue([]);
+    mocks.list.mockClear();
+    let deleted: { id: string } | null = null;
+    const deletion = {
+      eq: vi.fn(() => deletion),
+      select: () => ({ maybeSingle: async () => ({ data: deleted, error: null }) }),
+      then: (resolve: (value: { error: null }) => unknown) => Promise.resolve({ error: null }).then(resolve)
+    };
+    mocks.from.mockReturnValue({
+      select: () => ({ eq: () => ({ single: async () => ({
+        data: { name: "Town", storage_prefix: "map/old" }, error: null
+      }) }) }),
+      delete: () => deletion
+    });
+    await expect(deleteTownMap("map", "Town", logger)).rejects.toMatchObject({ message: "error.mapDataChanged", statusCode: 409 });
+    expect(mocks.list).not.toHaveBeenCalled();
+    deleted = { id: "map" };
+    await expect(deleteTownMap("map", "Town", logger)).resolves.toEqual({ ok: true });
+    expect(mocks.list).toHaveBeenCalledWith("town-maps", "map/old");
   });
 });
 

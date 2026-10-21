@@ -5,8 +5,11 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState
 } from "react";
+import { flushSync } from "react-dom";
+import { visualConfig } from "../domain/visualConfig";
 
 export type Theme = "light" | "dark";
 
@@ -14,7 +17,7 @@ export const THEME_STORAGE_KEY = "yingwu-theme";
 
 interface ThemeContextValue {
   theme: Theme;
-  toggleTheme: () => void;
+  toggleTheme: (origin?: { x: number; y: number }) => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -52,6 +55,9 @@ function applyTheme(theme: Theme) {
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>(resolveInitialTheme);
+  const transitionRef = useRef<ViewTransition | null>(null);
+
+  useEffect(() => () => transitionRef.current?.skipTransition(), []);
 
   useEffect(() => {
     applyTheme(theme);
@@ -68,16 +74,48 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return () => media.removeEventListener("change", syncSystemTheme);
   }, []);
 
-  const toggleTheme = useCallback(() => {
-    setTheme(current => {
-      const next = current === "dark" ? "light" : "dark";
+  // 新主题由点击处向外揭开；键盘、减少动效及不支持的浏览器直接切换。
+  const toggleTheme = useCallback((origin?: { x: number; y: number }) => {
+    if (transitionRef.current) return;
+    const root = document.documentElement;
+    const next = root.dataset.theme === "dark" ? "light" : "dark";
+    const update = () => {
+      flushSync(() => setTheme(next));
+      applyTheme(next);
       try {
         window.localStorage.setItem(THEME_STORAGE_KEY, next);
       } catch {
-        // Storage can be unavailable in strict privacy modes; the live theme
-        // still changes for the current page.
+        // 隐私模式不可持久化时，仍保留本次页面的主题。
       }
-      return next;
+    };
+    if (!origin || !document.startViewTransition || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      update();
+      return;
+    }
+    const { durationMilliseconds, featherPixels } = visualConfig.themeRipple;
+    const radius = Math.hypot(Math.max(origin.x, innerWidth - origin.x), Math.max(origin.y, innerHeight - origin.y));
+    root.style.setProperty("--theme-origin-x", `${origin.x}px`);
+    root.style.setProperty("--theme-origin-y", `${origin.y}px`);
+    root.style.setProperty("--theme-feather", `${featherPixels}px`);
+    root.classList.add("theme-rippling");
+    const transition = document.startViewTransition(update);
+    transitionRef.current = transition;
+    let rippleAnimation: Animation | undefined;
+    void transition.ready.then(() => {
+      rippleAnimation = root.animate({ "--theme-radius": ["0px", `${radius + featherPixels}px`] }, {
+        duration: durationMilliseconds,
+        easing: "cubic-bezier(.22,1,.36,1)",
+        fill: "forwards",
+        pseudoElement: "::view-transition-new(root)"
+      });
+    }).catch(error => {
+      if (!(error instanceof DOMException && error.name === "AbortError")) console.warn("Theme transition unavailable", error);
+    });
+    void transition.finished.finally(() => {
+      rippleAnimation?.cancel();
+      root.classList.remove("theme-rippling");
+      for (const property of ["--theme-origin-x", "--theme-origin-y", "--theme-feather"]) root.style.removeProperty(property);
+      transitionRef.current = null;
     });
   }, []);
 

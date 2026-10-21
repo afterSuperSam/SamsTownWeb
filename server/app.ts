@@ -8,6 +8,7 @@ import { accountRoutes } from "./routes/accounts.js";
 import { analyticsRoutes } from "./routes/analytics.js";
 import { authRoutes } from "./routes/auth.js";
 import { bilibiliRoutes } from "./routes/bilibili.js";
+import { blogRoutes } from "./routes/blog.js";
 import { mapRoutes } from "./routes/maps.js";
 import { registerStorageCleanup } from "./storageCleanup.js";
 
@@ -44,6 +45,7 @@ export async function buildApp(options: { logger?: boolean; startWorkers?: boole
   await app.register(analyticsRoutes);
   await app.register(authRoutes);
   await app.register(bilibiliRoutes);
+  await app.register(blogRoutes);
   await app.register(mapRoutes);
   if (options.startWorkers !== false) {
     registerStorageCleanup(app);

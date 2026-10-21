@@ -2,12 +2,11 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createInternalAuthUser } from "../accountProvisioning.js";
 import { processAccountCleanup } from "../accountCleanup.js";
-import { requireOwner } from "../auth.js";
+import { accountMutations, requireOwner } from "../auth.js";
 import { accountPasswordSchema, normalizeUsername, usernameSchema } from "../authCredentials.js";
 import { supabaseAdmin } from "../supabaseAdmin.js";
-import { TaskSemaphore } from "../taskQueue.js";
 
-const managedRole = z.enum(["admin", "member", "viewer"]);
+const managedRole = z.enum(["member", "owner"]);
 const createSchema = z.object({
   password: accountPasswordSchema,
   username: usernameSchema,
@@ -20,10 +19,9 @@ const updateSchema = z.object({
 
 const accountFields = "id,username,role,must_change_password,created_at";
 function accountFromRow(profile: { id: string; username: string; role: string; must_change_password: boolean; created_at: string }) {
-  return { id: profile.id, username: profile.username, role: profile.role,
+  return { id: profile.id, username: profile.username, role: profile.role === "owner" ? "owner" : "member",
     mustChangePassword: profile.must_change_password, createdAt: profile.created_at };
 }
-const accountUpdates = new TaskSemaphore(1);
 
 async function audit(app: FastifyInstance, actorId: string, action: string, targetId: string, details: Record<string, unknown> = {}) {
   const { error } = await supabaseAdmin.from("audit_logs").insert({
@@ -86,7 +84,9 @@ export async function accountRoutes(app: FastifyInstance) {
     return reply.code(201).send(accountFromRow(updated.data));
   });
 
-  app.patch("/api/accounts/:id", { preHandler: requireOwner }, async (request, reply) => accountUpdates.run(async () => {
+  app.patch("/api/accounts/:id", { preHandler: requireOwner }, async (request, reply) => accountMutations.run(async () => {
+    await requireOwner(request, reply);
+    if (reply.sent) return;
     const id = z.string().uuid().parse((request.params as { id: string }).id);
     const values = updateSchema.parse(request.body);
     const target = await supabaseAdmin.from("profiles").select("role,must_change_password").eq("id", id).single();
@@ -102,10 +102,8 @@ export async function accountRoutes(app: FastifyInstance) {
       ...(values.role ? { role: values.role } : {}),
       ...(values.temporaryPassword ? { must_change_password: true } : {})
     };
-    if (Object.keys(profileValues).length) {
-      const { error } = await supabaseAdmin.from("profiles").update(profileValues).eq("id", id);
-      if (error) throw error;
-    }
+    const { error } = await supabaseAdmin.from("profiles").update(profileValues).eq("id", id);
+    if (error) throw error;
     if (values.temporaryPassword) {
       const passwordResult = await supabaseAdmin.auth.admin.updateUserById(id, {
         password: values.temporaryPassword
@@ -127,17 +125,22 @@ export async function accountRoutes(app: FastifyInstance) {
   }));
 
   app.delete("/api/accounts/:id", { preHandler: requireOwner }, async (request, reply) => {
-    const id = z.string().uuid().parse((request.params as { id: string }).id);
-    if (id === request.actor!.id) return reply.code(409).send({ code: "error.accountSelfDelete" });
-    const prepared = await supabaseAdmin.rpc("prepare_account_deletion", {
-      p_actor_id: request.actor!.id,
-      p_target_id: id
+    await accountMutations.run(async () => {
+      await requireOwner(request, reply);
+      if (reply.sent) return;
+      const id = z.string().uuid().parse((request.params as { id: string }).id);
+      if (id === request.actor!.id) return reply.code(409).send({ code: "error.accountSelfDelete" });
+      const prepared = await supabaseAdmin.rpc("prepare_account_deletion", {
+        p_actor_id: request.actor!.id,
+        p_target_id: id
+      });
+      if (prepared.error) {
+        if (/last owner/i.test(prepared.error.message)) return reply.code(409).send({ code: "error.lastOwner" });
+        if (prepared.error.code === "P0002") return reply.code(404).send({ code: "error.accountMissing" });
+        throw prepared.error;
+      }
     });
-    if (prepared.error) {
-      if (/last owner/i.test(prepared.error.message)) return reply.code(409).send({ code: "error.lastOwner" });
-      if (prepared.error.code === "P0002") return reply.code(404).send({ code: "error.accountMissing" });
-      throw prepared.error;
-    }
+    if (reply.sent) return;
     await processAccountCleanup(app);
     return { ok: true };
   });

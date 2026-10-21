@@ -47,9 +47,39 @@ try {
         update public.profiles set role='owner', must_change_password=false where username='Existing';
         insert into private.qq_identities (user_id,qq_number) values ('00000000-0000-4000-8000-000000000099','123456789');`]);
     }
+    if (file === "20261018080615_retire_forum_and_manual_notices.sql") {
+      sql(["-c", `insert into public.town_images (id,area,source_url)
+        values ('00000000-0000-4000-8000-000000000077','forumHero','https://fixture.test/kept.jpg');`]);
+    }
+    if (file === "20261020041649_simplify_roles_and_map_projects.sql") {
+      sql(["-c", `insert into auth.users (id,email,raw_user_meta_data,raw_app_meta_data) values
+        ('00000000-0000-4000-8000-000000000091','legacy-admin@example.test','{"username":"LegacyAdmin"}','{"yingwu_trusted_provisioning":true}'),
+        ('00000000-0000-4000-8000-000000000092','legacy-viewer@example.test','{"username":"LegacyViewer"}','{"yingwu_trusted_provisioning":true}');
+        update public.profiles set role='admin' where username='LegacyAdmin';
+        update public.profiles set role='viewer' where username='LegacyViewer';`]);
+    }
     sql(["-f", `supabase/migrations/${file}`]);
   }
   sql(["-c", `do $$ begin
+    if (select count(*) from public.profiles where username in ('LegacyAdmin','LegacyViewer') and role='member') <> 2
+      then raise exception 'Legacy roles were not merged'; end if;
+    if to_regclass('public.map_markers') is not null or exists (
+      select 1 from information_schema.columns where table_schema='public' and table_name='map_claims' and column_name='status'
+    ) then raise exception 'Retired map schema remains'; end if;
+    if to_regprocedure('public.save_map_claim(uuid,uuid,text,text,text,text,text,jsonb,uuid)') is not null
+      or to_regprocedure('public.get_map_viewport(uuid,integer,integer,integer,integer,integer,integer,text)') is not null
+      then raise exception 'Retired map RPC remains'; end if;
+    if exists (
+      select 1 from pg_proc routine join pg_namespace namespace on namespace.oid=routine.pronamespace
+      where namespace.nspname in ('public','private') and routine.prokind='f'
+        and pg_get_functiondef(routine.oid) ~ '\\mmap_markers\\M'
+    ) then raise exception 'Surviving function references retired markers'; end if;
+    begin
+      update public.profiles set role='admin' where username='LegacyAdmin';
+      raise exception 'Retired role accepted';
+    exception when check_violation then null; end;
+    if not exists (select 1 from public.town_images where id='00000000-0000-4000-8000-000000000077'
+      and area='other' and source_url='https://fixture.test/kept.jpg') then raise exception 'Retired hero image was lost'; end if;
     if not exists (select 1 from auth.users u join public.profiles p on p.id=u.id
       where p.username='Existing' and p.role='owner' and not p.must_change_password
         and u.encrypted_password='fixture-password-hash') then raise exception 'Existing account changed'; end if;
@@ -60,6 +90,48 @@ try {
       raise exception 'Untrusted signup accepted';
     exception when insufficient_privilege then null; end;
   end; $$;`]);
+  // 退役对象不再暴露；账号删除、改名和浏览器只读授权继续正常工作。
+  sql(["-c", `begin;
+    insert into auth.users (id,email,raw_user_meta_data,raw_app_meta_data)
+      values ('00000000-0000-4000-8000-000000000088','member@example.test',
+        '{"username":"FixtureMember"}','{"yingwu_trusted_provisioning":true}');
+    set local role authenticated;
+    set local request.jwt.claim.sub='00000000-0000-4000-8000-000000000088';
+    do $$ begin
+      begin
+        perform public.update_own_username('PrematureRename');
+        raise exception 'Temporary-password account bypassed the profile write gate';
+      exception when insufficient_privilege then null; end;
+    end; $$;
+    reset role;
+    set local request.jwt.claim.sub='';
+    update public.profiles set role='member', must_change_password=false
+      where id='00000000-0000-4000-8000-000000000088';
+    set local role authenticated;
+    set local request.jwt.claim.sub='00000000-0000-4000-8000-000000000088';
+    select public.update_own_username('RenamedAuthor');
+    reset role;
+    set local request.jwt.claim.sub='';
+    set local role service_role;
+    select public.prepare_account_deletion('00000000-0000-4000-8000-000000000099',
+      '00000000-0000-4000-8000-000000000088');
+    reset role;
+    do $$ begin
+      if exists (select 1 from public.profiles where id='00000000-0000-4000-8000-000000000088') then
+        raise exception 'Account deletion failed';
+      end if;
+      if to_regclass('public.forum_posts') is not null or to_regclass('public.town_announcements') is not null
+        or to_regprocedure('public.list_forum_posts(text,integer,integer,uuid)') is not null
+        or to_regprocedure('private.can_write_forum()') is not null then
+        raise exception 'Retired forum or notice objects remain';
+      end if;
+      if has_table_privilege('authenticated','public.profiles','UPDATE')
+        or has_table_privilege('authenticated','public.profiles','DELETE')
+        or has_table_privilege('anon','public.profiles','TRUNCATE') then
+        raise exception 'Browser roles must not write account profiles directly';
+      end if;
+    end; $$;
+    rollback;`]);
   sql(["-f", "tests/map-database-integration.sql"]);
   console.log(`Validated ${migrations.length} migrations, QQ removal, existing accounts and map RLS. Fixture: ${scratch}`);
 } finally {

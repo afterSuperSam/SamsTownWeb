@@ -2,6 +2,7 @@ import type { TranslationKey } from "./translations";
 
 const knownErrorKeys = new Set<TranslationKey>([
   "error.generic",
+  "error.blogFeed",
   "error.notFound",
   "error.rateLimit",
   "error.imageCleanupQueued",
@@ -33,11 +34,6 @@ const knownErrorKeys = new Set<TranslationKey>([
   "error.accountSelfDelete",
   "error.lastOwner",
   "error.ownerRoleLocked",
-  "error.forumTitle",
-  "error.forumBody",
-  "error.forumKind",
-  "error.forumNotFound",
-  "error.forumRateLimit",
   "error.invalidMapImage",
   "error.mapFileTooLarge",
   "error.mapDimensionsChanged",

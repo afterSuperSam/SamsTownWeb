@@ -17,7 +17,7 @@ import {
   type PageViewSeries
 } from "../../services/webDataRepository";
 
-const categories: OperationCategory[] = ["map_claim", "map_marker"];
+const categories: OperationCategory[] = ["map_project", "map_marker"];
 const actions: OperationAction[] = ["add", "update", "delete"];
 const tableLabels: Record<string, TranslationKey> = {
   map_claims: "admin.analytics.table.map_claims",

@@ -121,8 +121,11 @@ export async function deleteTownMap(id: string, confirmName: string, log: Fastif
     error.statusCode = 400;
     throw error;
   }
-  const { error } = await supabaseAdmin.from("town_maps").delete().eq("id", id);
+  // 仅删除已确认的版本，避免换图或改名并发时误删新地图并遗留文件。
+  const { data, error } = await supabaseAdmin.from("town_maps").delete().eq("id", id)
+    .eq("storage_prefix", existingResult.data.storage_prefix).eq("name", confirmName).select("id").maybeSingle();
   if (error) throw mapDatabaseError(error);
+  if (!data) throw Object.assign(new Error("error.mapDataChanged"), { statusCode: 409 });
   await removeMapPrefixSafely(existingResult.data.storage_prefix, log);
   return { ok: true as const };
 }

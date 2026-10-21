@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { Link, Navigate, Route, Routes } from "react-router";
 import { AppShell } from "./components/AppShell";
 import { ProtectedRoute } from "./components/ProtectedRoute";
@@ -10,7 +10,6 @@ import { HomePage } from "./pages/HomePage";
 const HistoryPage = lazy(() => import("./pages/HistoryPage").then(module => ({ default: module.HistoryPage })));
 const AdminPage = lazy(() => import("./pages/AdminPage").then(module => ({ default: module.AdminPage })));
 const AtlasPage = lazy(() => import("./pages/AtlasPage").then(module => ({ default: module.AtlasPage })));
-const ForumPage = lazy(() => import("./pages/ForumPage").then(module => ({ default: module.ForumPage })));
 const AccountPage = lazy(() => import("./pages/AccountPage").then(module => ({ default: module.AccountPage })));
 
 function RouteLoading() {
@@ -27,24 +26,19 @@ function NotFoundPage() {
     return () => { document.title = previousTitle; };
   }, [t]);
 
-  return <main className="screen-message">
+  return <main className="status-page">
+    <p className="status-code">404 <span>Not Found</span></p>
     <h1>{t("app.notFound.title")}</h1>
-    <p>{t("app.notFound.body")}</p>
-    <Link className="button secondary" to="/">{t("app.nav.home")}</Link>
+    <p>{t("app.notFound.body")}<br />{t("app.notFound.continue")}</p>
+    <Link className="button text-action" to="/">{t("app.notFound.home")}</Link>
   </main>;
 }
 
 export function App() {
   const { loading: authLoading } = useAuth();
   const { t } = useI18n();
-  const [minimumReady, setMinimumReady] = useState(false);
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => setMinimumReady(true), 320);
-    return () => window.clearTimeout(timer);
-  }, []);
-
-  if (authLoading || !minimumReady) return <PageLoading label={t("app.loading.terrain")} />;
+  if (authLoading) return <PageLoading label={t("app.loading.terrain")} />;
 
   return (
     <Routes>
@@ -54,9 +48,6 @@ export function App() {
         <Route path="login" element={<Navigate to="/account" replace />} />
         <Route path="account" element={<Suspense fallback={<RouteLoading />}><AccountPage /></Suspense>} />
         <Route path="map" element={<Suspense fallback={<RouteLoading />}><AtlasPage /></Suspense>} />
-        <Route element={<ProtectedRoute capability="forum:view" />}>
-          <Route path="forum" element={<Suspense fallback={<RouteLoading />}><ForumPage /></Suspense>} />
-        </Route>
         <Route element={<ProtectedRoute capability="admin" />}>
           <Route path="admin" element={<Suspense fallback={<RouteLoading />}><AdminPage /></Suspense>} />
         </Route>

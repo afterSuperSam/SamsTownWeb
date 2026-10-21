@@ -6,15 +6,15 @@ import { pixelToChunk, rectangleCells, splitClaimRegions, toggleCells } from "..
 
 describe("domain rules", () => {
   it("preserves the capability matrix", () => {
-    for (const role of ["viewer", "member", "admin", "owner"] as AppRole[]) {
+    for (const role of ["member", "owner"] as AppRole[]) {
       expect(can(role, "map:view")).toBe(true);
-      expect(can(role, "forum:write")).toBe(role !== "viewer");
-      expect(can(role, "map:claim")).toBe(role !== "viewer");
-      expect(can(role, "map:manage")).toBe(role === "admin" || role === "owner");
+      expect(can(role, "map:project")).toBe(true);
+      expect(can(role, "map:manage")).toBe(role === "owner");
       expect(can(role, "admin")).toBe(role === "owner");
     }
     expect(can(null, "admin")).toBe(false);
-    expect(can(undefined, "forum:write")).toBe(false);
+    expect(can(undefined, "map:project")).toBe(false);
+    expect(can(null, "map:view")).toBe(true);
   });
   it("rejects executable and credential-bearing links", () => {
     for (const value of ["javascript:alert(1)", "data:text/html,unsafe", "/relative", "https://user:password@example.com"]) {
