@@ -1,0 +1,114 @@
+import multipart from "@fastify/multipart";
+import type { FastifyInstance, FastifyRequest } from "fastify";
+import { z } from "zod";
+import { requireMapManager } from "../auth.js";
+import {
+  createTownMap,
+  deleteTownMap,
+  replaceTownMapImage,
+  updateTownMap
+} from "../maps/mapService.js";
+import type { MapFields } from "../maps/mapService.js";
+import { cleanupStagedMap, stageMapUpload, type StagedMapImage } from "../maps/mapTilePipeline.js";
+import { TaskSemaphore } from "../taskQueue.js";
+
+const mapFieldsSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  description: z.string().max(4000).default(""),
+  shortLabel: z.string().max(24).default(""),
+  visible: z.boolean().default(true),
+  sortOrder: z.number().int().default(0)
+});
+const idSchema = z.string().uuid();
+const mapUploads = new TaskSemaphore(1, 2);
+
+export async function mapRoutes(app: FastifyInstance) {
+  await app.register(multipart, {
+    limits: { files: 1, fields: 8, fileSize: 50 * 1024 * 1024, parts: 9 }
+  });
+
+  app.post("/api/maps", {
+    preHandler: requireMapManager,
+    config: { rateLimit: { max: 3, timeWindow: "15 minutes" } }
+  }, async (request, reply) => {
+    return mapUploads.run(async () => {
+      const parsed = await parseMapMultipart(request);
+      let fields: MapFields;
+      try {
+        fields = mapFieldsSchema.parse({
+          name: parsed.fields.name,
+          description: parsed.fields.description ?? "",
+          shortLabel: parsed.fields.shortLabel ?? "",
+          visible: parsed.fields.visible !== "false",
+          sortOrder: Number(parsed.fields.sortOrder ?? 0)
+        });
+      } catch (error) {
+        await cleanupStagedMap(parsed.image);
+        throw error;
+      }
+      if (!request.actor) {
+        await cleanupStagedMap(parsed.image);
+        return reply.code(401).send({ code: "error.session" });
+      }
+      return createTownMap(parsed.image, fields, request.actor.id, request.log);
+    });
+  });
+
+  app.patch("/api/maps/:id", { preHandler: requireMapManager }, async request => {
+    const id = idSchema.parse((request.params as { id: string }).id);
+    return updateTownMap(id, mapFieldsSchema.parse(request.body));
+  });
+
+  app.put("/api/maps/:id/image", {
+    preHandler: requireMapManager,
+    config: { rateLimit: { max: 3, timeWindow: "15 minutes" } }
+  }, async request => {
+    return mapUploads.run(async () => {
+      const id = idSchema.parse((request.params as { id: string }).id);
+      const parsed = await parseMapMultipart(request);
+      return replaceTownMapImage(id, parsed.image, parsed.fields.clearExisting === "true", request.log);
+    });
+  });
+
+  app.delete("/api/maps/:id", { preHandler: requireMapManager }, async request => {
+    const id = idSchema.parse((request.params as { id: string }).id);
+    const body = z.object({ confirmName: z.string() }).parse(request.body);
+    return deleteTownMap(id, body.confirmName, request.log);
+  });
+}
+
+async function parseMapMultipart(request: FastifyRequest): Promise<{ fields: Record<string, string>; image: StagedMapImage }> {
+  const fields: Record<string, string> = {};
+  let image: StagedMapImage | null = null;
+  try {
+    for await (const part of request.parts()) {
+      if (part.type === "field") {
+        fields[part.fieldname] = String(part.value ?? "");
+      } else {
+        if (image) throw invalidMapError();
+        if (!allowedImageTypes.has(part.mimetype)) throw invalidMapError();
+        image = await stageMapUpload(part.file, part.filename, part.mimetype);
+        if (part.file.truncated) throw fileSizeError();
+      }
+    }
+    if (!image) throw invalidMapError();
+    return { fields, image };
+  } catch (error) {
+    if (image) await cleanupStagedMap(image);
+    throw error;
+  }
+}
+
+const allowedImageTypes = new Set(["image/png", "image/jpeg", "image/webp", "image/tiff"]);
+
+function invalidMapError() {
+  const error = new Error("error.invalidMapImage") as Error & { statusCode?: number };
+  error.statusCode = 400;
+  return error;
+}
+
+function fileSizeError() {
+  const error = new Error("error.mapFileTooLarge") as Error & { statusCode?: number };
+  error.statusCode = 413;
+  return error;
+}
