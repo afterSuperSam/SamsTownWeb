@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
+import type { FastifyBaseLogger } from "fastify";
 import { supabaseAdmin } from "../supabaseAdmin.js";
+import { listStorageFiles, queueStorageCleanup } from "../storageCleanupQueue.js";
 import type { GeneratedTiles, StagedMapImage } from "./mapTilePipeline.js";
 
 const bucket = supabaseAdmin.storage.from("town-maps");
@@ -8,7 +10,8 @@ export async function uploadMapAssets(
   image: StagedMapImage,
   tiles: GeneratedTiles,
   prefix: string,
-  extension: string
+  extension: string,
+  log: FastifyBaseLogger
 ): Promise<string> {
   const uploaded: string[] = [];
   const originalPath = `${prefix}/original/source.${extension}`;
@@ -29,8 +32,13 @@ export async function uploadMapAssets(
     return originalPath;
   } catch (error) {
     if (uploaded.length) {
-      const cleanup = await bucket.remove(uploaded);
-      if (cleanup.error) throw new AggregateError([error, cleanup.error], "Map upload and rollback both failed");
+      try {
+        const cleanup = await bucket.remove(uploaded);
+        if (cleanup.error) throw cleanup.error;
+      } catch (cleanupError) {
+        await queueStorageCleanup("town-maps", prefix, true, cleanupError, log);
+        throw new AggregateError([error, cleanupError], "Map upload failed; rollback queued for retry");
+      }
     }
     throw error;
   }
@@ -42,27 +50,9 @@ async function upload(path: string, body: Buffer, contentType: string) {
 }
 
 export async function removeMapPrefix(prefix: string): Promise<void> {
-  const paths = await listFiles(prefix);
+  const paths = await listStorageFiles("town-maps", prefix);
   for (let index = 0; index < paths.length; index += 100) {
     const { error } = await bucket.remove(paths.slice(index, index + 100));
     if (error) throw error;
   }
-}
-
-async function listFiles(prefix: string): Promise<string[]> {
-  const found: string[] = [];
-  let offset = 0;
-  while (true) {
-    const { data, error } = await bucket.list(prefix, { limit: 1000, offset });
-    if (error) throw error;
-    const entries = data ?? [];
-    for (const entry of entries) {
-      const path = `${prefix}/${entry.name}`;
-      if (entry.id) found.push(path);
-      else found.push(...await listFiles(path));
-    }
-    if (entries.length < 1000) break;
-    offset += entries.length;
-  }
-  return found;
 }

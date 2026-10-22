@@ -1,3 +1,4 @@
+import { Button } from "../../components/Button";
 import { Activity, CalendarDays, ChevronDown, Eye, Globe2, RefreshCw, Trash2, UsersRound } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SelectField } from "../../components/SelectField";
@@ -16,14 +17,11 @@ import {
   type PageViewSeries
 } from "../../services/webDataRepository";
 
-const categories: OperationCategory[] = ["map_claim", "map_marker", "material", "resource"];
+const categories: OperationCategory[] = ["map_project", "map_marker"];
 const actions: OperationAction[] = ["add", "update", "delete"];
 const tableLabels: Record<string, TranslationKey> = {
   map_claims: "admin.analytics.table.map_claims",
-  map_markers: "admin.analytics.table.map_markers",
-  material_projects: "admin.analytics.table.material_projects",
-  material_assignments: "admin.analytics.table.material_assignments",
-  resources: "admin.analytics.table.resources"
+  map_markers: "admin.analytics.table.map_markers"
 };
 
 export function WebDataPanel({ onNotice }: {
@@ -83,9 +81,9 @@ export function WebDataPanel({ onNotice }: {
     <div className="web-data-panel">
       <header className="admin-heading">
         <div><h2>{t("admin.analytics.title")}</h2><p>{t("admin.analytics.body")}</p></div>
-        <button className="button" type="button" onClick={() => void load()} disabled={loading}>
+        <Button  type="button" onClick={() => void load()} disabled={loading}>
           <RefreshCw size={16} />{t("app.retry")}
-        </button>
+        </Button>
       </header>
 
       <section className="web-data-overview">
@@ -130,7 +128,7 @@ export function WebDataPanel({ onNotice }: {
       <section className="operation-log-section">
         <header>
           <div><h3>{t("admin.analytics.operations")}</h3><p>{t("admin.analytics.retention")}</p></div>
-          <button className="button small" type="button" onClick={() => void cleanup()}><Trash2 size={15} />{t("admin.analytics.cleanup")}</button>
+          <Button className="small" type="button" onClick={() => void cleanup()}><Trash2 size={15} />{t("admin.analytics.cleanup")}</Button>
         </header>
         <div className="operation-filters">
           <SelectField

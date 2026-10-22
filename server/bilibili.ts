@@ -1,3 +1,4 @@
+import { config } from "./config.js";
 import { z } from "zod";
 
 const BVID_PATTERN = /BV[0-9A-Za-z]{10}/;
@@ -28,20 +29,12 @@ export interface BilibiliVideoMetadata {
   watchUrl: string;
 }
 
-// Accept only raw BV ids or URLs owned by Bilibili. This prevents the metadata
-// resolver from becoming a general-purpose server-side request proxy.
+// 仅接受 BV 号或受信任的哔哩哔哩地址。
 export function extractBvid(input: string): string {
   const value = input.trim();
   if (/^https?:\/\//i.test(value)) {
-    let url: URL;
-    try {
-      url = new URL(value);
-    } catch {
-      throw productError("error.invalidBilibiliUrl");
-    }
-    if (url.protocol !== "https:" || !isBilibiliHost(url.hostname)) {
-      throw productError("error.invalidBilibiliUrl");
-    }
+    const url = parseBilibiliUrl(value);
+    if (!url) throw productError("error.invalidBilibiliUrl");
     const match = `${url.pathname}${url.search}`.match(BVID_PATTERN);
     if (match) return match[0];
     throw productError("error.invalidBilibiliUrl");
@@ -61,8 +54,9 @@ export async function resolveBilibiliVideo(
   let response: Response;
   try {
     response = await fetcher(`${API_URL}?bvid=${encodeURIComponent(bvid)}`, {
+      redirect: "error",
       headers: requestHeaders,
-      signal: AbortSignal.timeout(10_000)
+      signal: AbortSignal.timeout(config.BILIBILI_REQUEST_TIMEOUT_MS)
     });
   } catch {
     throw productError("error.bilibiliMetadata");
@@ -95,24 +89,23 @@ async function resolveBvid(input: string, fetcher: typeof fetch): Promise<string
   try {
     return extractBvid(input);
   } catch (error) {
-    const url = safeUrl(input);
+    const url = parseBilibiliUrl(input);
     if (!url || url.hostname.toLowerCase() !== "b23.tv") throw error;
     return resolveTrustedShortLink(url, fetcher);
   }
 }
 
-function safeUrl(input: string): URL | null {
+function parseBilibiliUrl(input: string, base?: URL): URL | null {
   try {
-    const url = new URL(input.trim());
-    return url.protocol === "https:" ? url : null;
+    const url = new URL(input.trim(), base);
+    return url.protocol === "https:" && !url.username && !url.password && !url.port
+      && isBilibiliHost(url.hostname) ? url : null;
   } catch {
     return null;
   }
 }
 
-// Follow redirects manually so every hop remains HTTPS and inside Bilibili's
-// own hostnames. Automatic redirects would validate only the final URL after
-// the server had already made an untrusted request.
+// 短链的每一跳都先校验 HTTPS、主机及端口，再发起请求。
 async function resolveTrustedShortLink(initialUrl: URL, fetcher: typeof fetch) {
   let currentUrl = initialUrl;
   for (let redirectCount = 0; redirectCount <= 3; redirectCount += 1) {
@@ -122,20 +115,17 @@ async function resolveTrustedShortLink(initialUrl: URL, fetcher: typeof fetch) {
         method: "GET",
         redirect: "manual",
         headers: requestHeaders,
-        signal: AbortSignal.timeout(10_000)
+        signal: AbortSignal.timeout(config.BILIBILI_REQUEST_TIMEOUT_MS)
       });
+      await response.body?.cancel();
     } catch {
       throw productError("error.invalidBilibiliUrl");
     }
-    void response.body?.cancel();
-
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
       if (!location) throw productError("error.invalidBilibiliUrl");
-      const nextUrl = safeUrl(new URL(location, currentUrl).toString());
-      if (!nextUrl || !isBilibiliHost(nextUrl.hostname)) {
-        throw productError("error.invalidBilibiliUrl");
-      }
+      const nextUrl = parseBilibiliUrl(location, currentUrl);
+      if (!nextUrl) throw productError("error.invalidBilibiliUrl");
       currentUrl = nextUrl;
       continue;
     }

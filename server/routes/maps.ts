@@ -1,6 +1,7 @@
 import multipart from "@fastify/multipart";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
+import { config } from "../config.js";
 import { requireMapManager } from "../auth.js";
 import {
   createTownMap,
@@ -24,12 +25,12 @@ const mapUploads = new TaskSemaphore(1, 2);
 
 export async function mapRoutes(app: FastifyInstance) {
   await app.register(multipart, {
-    limits: { files: 1, fields: 8, fileSize: 50 * 1024 * 1024, parts: 9 }
+    limits: { files: 1, fields: 8, fileSize: config.MAP_UPLOAD_MAX_BYTES, parts: 9 }
   });
 
   app.post("/api/maps", {
     preHandler: requireMapManager,
-    config: { rateLimit: { max: 3, timeWindow: "15 minutes" } }
+    config: { rateLimit: { max: config.MAP_UPLOAD_RATE_MAX, timeWindow: config.AUTH_RATE_WINDOW_MS } }
   }, async (request, reply) => {
     return mapUploads.run(async () => {
       const parsed = await parseMapMultipart(request);
@@ -46,11 +47,8 @@ export async function mapRoutes(app: FastifyInstance) {
         await cleanupStagedMap(parsed.image);
         throw error;
       }
-      if (!request.actor) {
-        await cleanupStagedMap(parsed.image);
-        return reply.code(401).send({ code: "error.session" });
-      }
-      return createTownMap(parsed.image, fields, request.actor.id, request.log);
+      const map = await createTownMap(parsed.image, fields, request.actor!.id, request.log);
+      return reply.code(201).send(map);
     });
   });
 
@@ -61,7 +59,7 @@ export async function mapRoutes(app: FastifyInstance) {
 
   app.put("/api/maps/:id/image", {
     preHandler: requireMapManager,
-    config: { rateLimit: { max: 3, timeWindow: "15 minutes" } }
+    config: { rateLimit: { max: config.MAP_UPLOAD_RATE_MAX, timeWindow: config.AUTH_RATE_WINDOW_MS } }
   }, async request => {
     return mapUploads.run(async () => {
       const id = idSchema.parse((request.params as { id: string }).id);
@@ -85,10 +83,9 @@ async function parseMapMultipart(request: FastifyRequest): Promise<{ fields: Rec
       if (part.type === "field") {
         fields[part.fieldname] = String(part.value ?? "");
       } else {
-        if (image) throw invalidMapError();
-        if (!allowedImageTypes.has(part.mimetype)) throw invalidMapError();
+        if (image || !allowedImageTypes.has(part.mimetype)) throw invalidMapError();
         image = await stageMapUpload(part.file, part.filename, part.mimetype);
-        if (part.file.truncated) throw fileSizeError();
+        if (part.file.truncated) throw Object.assign(new Error("error.mapFileTooLarge"), { statusCode: 413 });
       }
     }
     if (!image) throw invalidMapError();
@@ -102,13 +99,5 @@ async function parseMapMultipart(request: FastifyRequest): Promise<{ fields: Rec
 const allowedImageTypes = new Set(["image/png", "image/jpeg", "image/webp", "image/tiff"]);
 
 function invalidMapError() {
-  const error = new Error("error.invalidMapImage") as Error & { statusCode?: number };
-  error.statusCode = 400;
-  return error;
-}
-
-function fileSizeError() {
-  const error = new Error("error.mapFileTooLarge") as Error & { statusCode?: number };
-  error.statusCode = 413;
-  return error;
+  return Object.assign(new Error("error.invalidMapImage"), { statusCode: 400 });
 }

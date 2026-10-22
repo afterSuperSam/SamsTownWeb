@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { config } from "./config.js";
 import { supabaseAdmin } from "./supabaseAdmin.js";
+import { listStorageFiles } from "./storageCleanupQueue.js";
 
 interface CleanupRow {
   id: number;
@@ -9,7 +10,6 @@ interface CleanupRow {
   recursive: boolean;
   attempts: number;
 }
-const MAX_ATTEMPTS = 8;
 
 export function registerStorageCleanup(app: FastifyInstance): void {
   let running = false;
@@ -31,7 +31,7 @@ export function registerStorageCleanup(app: FastifyInstance): void {
 }
 
 async function processStorageCleanup(app: FastifyInstance): Promise<void> {
-  const pending = await supabaseAdmin.rpc("claim_storage_cleanup_batch", { p_limit: 50 });
+  const pending = await supabaseAdmin.rpc("claim_storage_cleanup_batch", { p_limit: config.STORAGE_CLEANUP_BATCH_SIZE });
   if (pending.error) {
     app.log.error({ err: pending.error }, "Storage cleanup queue lookup failed");
     return;
@@ -39,7 +39,7 @@ async function processStorageCleanup(app: FastifyInstance): Promise<void> {
   for (const item of (pending.data ?? []) as CleanupRow[]) {
     try {
       const bucket = supabaseAdmin.storage.from(item.bucket_id);
-      const paths = item.recursive ? await listFiles(item.bucket_id, item.object_path) : [item.object_path];
+      const paths = item.recursive ? await listStorageFiles(item.bucket_id, item.object_path) : [item.object_path];
       for (let index = 0; index < paths.length; index += 100) {
         const removal = await bucket.remove(paths.slice(index, index + 100));
         if (removal.error) throw removal.error;
@@ -51,36 +51,20 @@ async function processStorageCleanup(app: FastifyInstance): Promise<void> {
       const attempts = item.attempts + 1;
       const failed = await supabaseAdmin.from("storage_cleanup_queue").update({
         attempts,
-        status: attempts >= MAX_ATTEMPTS ? "dead" : "pending",
+        status: attempts >= config.STORAGE_CLEANUP_MAX_ATTEMPTS ? "dead" : "pending",
         next_attempt_at: new Date(Date.now() + retryDelayMs(attempts)).toISOString(),
         locked_at: null,
         last_error: message.slice(0, 500)
       }).eq("id", item.id);
       if (failed.error) app.log.error({ err: failed.error, cleanupId: item.id }, "Storage cleanup retry update failed");
       app.log.error({ err: error, cleanupId: item.id }, "Storage cleanup attempt failed");
+      if (attempts >= config.STORAGE_CLEANUP_MAX_ATTEMPTS) {
+        app.log.error({ cleanupId: item.id, bucketId: item.bucket_id, objectPath: item.object_path }, "Storage cleanup requires manual intervention");
+      }
     }
   }
 }
 
 export function retryDelayMs(attempts: number): number {
-  return Math.min(60 * 60 * 1000, 30_000 * 2 ** Math.max(0, attempts - 1));
-}
-
-async function listFiles(bucketId: string, prefix: string): Promise<string[]> {
-  const bucket = supabaseAdmin.storage.from(bucketId);
-  const found: string[] = [];
-  let offset = 0;
-  while (true) {
-    const { data, error } = await bucket.list(prefix, { limit: 1000, offset });
-    if (error) throw error;
-    const entries = data ?? [];
-    for (const entry of entries) {
-      const path = `${prefix}/${entry.name}`;
-      if (entry.id) found.push(path);
-      else found.push(...await listFiles(bucketId, path));
-    }
-    if (entries.length < 1000) break;
-    offset += entries.length;
-  }
-  return found;
+  return Math.min(config.STORAGE_CLEANUP_RETRY_MAX_MS, config.STORAGE_CLEANUP_RETRY_BASE_MS * 2 ** Math.max(0, attempts - 1));
 }

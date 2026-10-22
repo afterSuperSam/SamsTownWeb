@@ -1,15 +1,8 @@
 import { X } from "lucide-react";
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useLayoutEffect, useId, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useI18n } from "../i18n/I18nContext";
-
-const focusableSelector = [
-  "a[href]",
-  "button:not([disabled])",
-  "input:not([disabled])",
-  "select:not([disabled])",
-  "textarea:not([disabled])",
-  "[tabindex]:not([tabindex='-1'])"
-].join(",");
+import { Button, IconButton, SaveButton } from "./Button";
 
 interface DialogProps {
   title: string;
@@ -20,109 +13,72 @@ interface DialogProps {
   dismissible?: boolean;
 }
 
-// One accessible modal shell owns focus trapping, Escape, backdrop close, and
-// focus restoration for every dialog in the product.
+// 原生模态框统一负责焦点隔离、恢复、Escape 和顶层显示。
 export function Dialog({ title, onClose, children, className = "", descriptionId, dismissible = true }: DialogProps) {
   const { t } = useI18n();
   const titleId = useId();
-  const panelRef = useRef<HTMLElement>(null);
-  const onCloseRef = useRef(onClose);
-  useEffect(() => {
-    onCloseRef.current = onClose;
-  }, [onClose]);
-
-  useEffect(() => {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useLayoutEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const panel = panelRef.current;
-    const firstControl = panel?.querySelector<HTMLElement>(focusableSelector);
-    (firstControl ?? panel)?.focus();
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && dismissible) {
-        event.preventDefault();
-        onCloseRef.current();
-        return;
-      }
-      if (event.key !== "Tab" || !panel) return;
-      const controls = [...panel.querySelectorAll<HTMLElement>(focusableSelector)]
-        .filter(control => !control.hidden && control.getAttribute("aria-hidden") !== "true");
-      if (!controls.length) {
-        event.preventDefault();
-        panel.focus();
-        return;
-      }
-      const first = controls[0];
-      const last = controls.at(-1)!;
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
+    const dialog = dialogRef.current!;
+    dialog.showModal();
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = previousOverflow;
+      dialog.close();
       previousFocus?.focus();
+      document.body.style.overflow = previousOverflow;
     };
-  }, [dismissible]);
+  }, []);
 
-  return (
-    <div className="modal-backdrop" onMouseDown={event => {
-      if (dismissible && event.target === event.currentTarget) onClose();
+  return createPortal(<dialog ref={dialogRef} className={`modal ${className}`.trim()}
+    aria-labelledby={titleId} aria-describedby={descriptionId}
+    onCancel={event => { event.preventDefault(); if (dismissible) onClose(); }}
+    onClick={event => {
+      if (!dismissible || event.target !== event.currentTarget) return;
+      const bounds = event.currentTarget.getBoundingClientRect();
+      if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) onClose();
     }}>
-      <section
-        ref={panelRef}
-        className={`modal ${className}`.trim()}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={descriptionId}
-        tabIndex={-1}
-      >
-        <header className="modal-head">
-          <h2 id={titleId}>{title}</h2>
-          {dismissible ? <button type="button" className="icon-button" onClick={onClose} aria-label={t("app.close")}><X size={19} /></button> : null}
-        </header>
-        {children}
-      </section>
-    </div>
-  );
+    <header className="modal-head">
+      <h2 id={titleId}>{title}</h2>
+      {dismissible ? <IconButton icon={X} onClick={onClose} aria-label={t("app.close")} /> : null}
+    </header>
+    {children}
+  </dialog>, document.body);
 }
 
-interface ConfirmDialogProps {
+// 编辑对话框共享保存、取消与可选删除操作。
+export function DialogActions({ busy = false, onClose, children, saveLabel, disabled, className = "" }: {
+  busy?: boolean;
+  onClose: () => void;
+  children?: ReactNode;
+  saveLabel?: string;
+  disabled?: boolean;
+  className?: string;
+}) {
+  const { t } = useI18n();
+  return <div className={`button-row end ${className}`.trim()}>
+    {children}
+    <Button className="secondary" onClick={onClose} busy={busy}>{t("app.cancel")}</Button>
+    <SaveButton type="submit" busy={busy} disabled={disabled}>{saveLabel}</SaveButton>
+  </div>;
+}
+
+export function ConfirmDialog({ title, description, onClose, onConfirm, busy = false, confirmLabel }: {
   title: string;
   description: string;
   onClose: () => void;
   onConfirm: () => void;
   busy?: boolean;
   confirmLabel?: string;
-}
-
-export function ConfirmDialog({
-  title,
-  description,
-  onClose,
-  onConfirm,
-  busy = false,
-  confirmLabel
-}: ConfirmDialogProps) {
+}) {
   const { t } = useI18n();
   const descriptionId = useId();
-  return (
-    <Dialog title={title} onClose={onClose} className="confirm-dialog" descriptionId={descriptionId} dismissible={!busy}>
-      <p id={descriptionId}>{description}</p>
-      <div className="button-row end">
-        <button type="button" className="button secondary" onClick={onClose} disabled={busy}>{t("app.cancel")}</button>
-        <button type="button" className="button danger" onClick={onConfirm} disabled={busy}>
-          {busy ? t("app.saving") : (confirmLabel ?? t("app.confirm"))}
-        </button>
-      </div>
-    </Dialog>
-  );
+  return <Dialog title={title} onClose={onClose} className="confirm-dialog" descriptionId={descriptionId} dismissible={!busy}>
+    <p id={descriptionId}>{description}</p>
+    <div className="button-row end">
+      <Button className="secondary" onClick={onClose} busy={busy}>{t("app.cancel")}</Button>
+      <Button className="danger" onClick={onConfirm} busy={busy}>{confirmLabel ?? t("app.confirm")}</Button>
+    </div>
+  </Dialog>;
 }

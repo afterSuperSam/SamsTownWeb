@@ -2,12 +2,11 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createInternalAuthUser } from "../accountProvisioning.js";
 import { processAccountCleanup } from "../accountCleanup.js";
-import { requireOwner } from "../auth.js";
+import { accountMutations, requireOwner } from "../auth.js";
 import { accountPasswordSchema, normalizeUsername, usernameSchema } from "../authCredentials.js";
 import { supabaseAdmin } from "../supabaseAdmin.js";
-import { TaskSemaphore } from "../taskQueue.js";
 
-const managedRole = z.enum(["admin", "member", "viewer"]);
+const managedRole = z.enum(["member", "owner"]);
 const createSchema = z.object({
   password: accountPasswordSchema,
   username: usernameSchema,
@@ -18,11 +17,11 @@ const updateSchema = z.object({
   temporaryPassword: accountPasswordSchema.optional()
 }).refine(value => value.role || value.temporaryPassword);
 
-interface AccountQqBinding {
-  user_id: string;
-  qq_number: string;
+const accountFields = "id,username,role,must_change_password,created_at";
+function accountFromRow(profile: { id: string; username: string; role: string; must_change_password: boolean; created_at: string }) {
+  return { id: profile.id, username: profile.username, role: profile.role === "owner" ? "owner" : "member",
+    mustChangePassword: profile.must_change_password, createdAt: profile.created_at };
 }
-const accountUpdates = new TaskSemaphore(1);
 
 async function audit(app: FastifyInstance, actorId: string, action: string, targetId: string, details: Record<string, unknown> = {}) {
   const { error } = await supabaseAdmin.from("audit_logs").insert({
@@ -39,24 +38,10 @@ async function audit(app: FastifyInstance, actorId: string, action: string, targ
 // API and are never logged or returned to the browser.
 export async function accountRoutes(app: FastifyInstance) {
   app.get("/api/accounts", { preHandler: requireOwner }, async () => {
-    const [profiles, bindings] = await Promise.all([
-      supabaseAdmin.from("profiles").select("id,username,role,must_change_password,created_at").order("created_at"),
-      supabaseAdmin.rpc("list_account_qq_bindings")
-    ]);
+    const profiles = await supabaseAdmin.from("profiles")
+      .select(accountFields).order("created_at");
     if (profiles.error) throw profiles.error;
-    if (bindings.error) throw bindings.error;
-    const qqByUser = new Map(((bindings.data as AccountQqBinding[] | null) ?? []).map(binding => [
-      String(binding.user_id),
-      String(binding.qq_number)
-    ]));
-    return (profiles.data ?? []).map(profile => ({
-      id: profile.id,
-      username: profile.username,
-      role: profile.role,
-      qqNumber: qqByUser.get(profile.id) ?? null,
-      mustChangePassword: profile.must_change_password,
-      createdAt: profile.created_at
-    }));
+    return (profiles.data ?? []).map(accountFromRow);
   });
 
   app.post("/api/accounts", { preHandler: requireOwner }, async (request, reply) => {
@@ -69,18 +54,16 @@ export async function accountRoutes(app: FastifyInstance) {
     }
     let created;
     try {
-      // The trigger creates this account in a blocked state. Only the profile
-      // update below releases the QQ gate while retaining the password gate.
-      created = await createInternalAuthUser(values.username, values.password, { qqRegistrationPending: true });
-    } catch {
+      created = await createInternalAuthUser(values.username, values.password);
+    } catch (error) {
+      app.log.error({ err: error }, "Account creation failed");
       return reply.code(400).send({ code: "error.accountCreate" });
     }
     const updated = await supabaseAdmin.from("profiles").update({
       username: values.username,
       role: values.role,
-      must_change_password: true,
-      qq_registration_pending: false
-    }).eq("id", created.id).select("id,username,role,must_change_password,created_at").single();
+      must_change_password: true
+    }).eq("id", created.id).select(accountFields).single();
     if (updated.error) {
       const rollback = await supabaseAdmin.auth.admin.deleteUser(created.id);
       if (rollback.error) {
@@ -98,21 +81,19 @@ export async function accountRoutes(app: FastifyInstance) {
       throw updated.error;
     }
     await audit(app, request.actor!.id, "account.create", created.id, { role: values.role });
-    return reply.code(201).send({
-      id: updated.data.id,
-      username: updated.data.username,
-      role: updated.data.role,
-      qqNumber: null,
-      mustChangePassword: updated.data.must_change_password,
-      createdAt: updated.data.created_at
-    });
+    return reply.code(201).send(accountFromRow(updated.data));
   });
 
-  app.patch("/api/accounts/:id", { preHandler: requireOwner }, async (request, reply) => accountUpdates.run(async () => {
+  app.patch("/api/accounts/:id", { preHandler: requireOwner }, async (request, reply) => accountMutations.run(async () => {
+    await requireOwner(request, reply);
+    if (reply.sent) return;
     const id = z.string().uuid().parse((request.params as { id: string }).id);
     const values = updateSchema.parse(request.body);
     const target = await supabaseAdmin.from("profiles").select("role,must_change_password").eq("id", id).single();
-    if (target.error) return reply.code(404).send({ code: "error.accountMissing" });
+    if (target.error) {
+      if (target.error.code === "PGRST116") return reply.code(404).send({ code: "error.accountMissing" });
+      throw target.error;
+    }
     if (target.data.role === "owner" && values.role) {
       return reply.code(409).send({ code: "error.ownerRoleLocked" });
     }
@@ -121,10 +102,8 @@ export async function accountRoutes(app: FastifyInstance) {
       ...(values.role ? { role: values.role } : {}),
       ...(values.temporaryPassword ? { must_change_password: true } : {})
     };
-    if (Object.keys(profileValues).length) {
-      const { error } = await supabaseAdmin.from("profiles").update(profileValues).eq("id", id);
-      if (error) throw error;
-    }
+    const { error } = await supabaseAdmin.from("profiles").update(profileValues).eq("id", id);
+    if (error) throw error;
     if (values.temporaryPassword) {
       const passwordResult = await supabaseAdmin.auth.admin.updateUserById(id, {
         password: values.temporaryPassword
@@ -146,17 +125,22 @@ export async function accountRoutes(app: FastifyInstance) {
   }));
 
   app.delete("/api/accounts/:id", { preHandler: requireOwner }, async (request, reply) => {
-    const id = z.string().uuid().parse((request.params as { id: string }).id);
-    if (id === request.actor!.id) return reply.code(409).send({ code: "error.accountSelfDelete" });
-    const prepared = await supabaseAdmin.rpc("prepare_account_deletion", {
-      p_actor_id: request.actor!.id,
-      p_target_id: id
+    await accountMutations.run(async () => {
+      await requireOwner(request, reply);
+      if (reply.sent) return;
+      const id = z.string().uuid().parse((request.params as { id: string }).id);
+      if (id === request.actor!.id) return reply.code(409).send({ code: "error.accountSelfDelete" });
+      const prepared = await supabaseAdmin.rpc("prepare_account_deletion", {
+        p_actor_id: request.actor!.id,
+        p_target_id: id
+      });
+      if (prepared.error) {
+        if (/last owner/i.test(prepared.error.message)) return reply.code(409).send({ code: "error.lastOwner" });
+        if (prepared.error.code === "P0002") return reply.code(404).send({ code: "error.accountMissing" });
+        throw prepared.error;
+      }
     });
-    if (prepared.error) {
-      if (/last owner/i.test(prepared.error.message)) return reply.code(409).send({ code: "error.lastOwner" });
-      if (prepared.error.code === "P0002") return reply.code(404).send({ code: "error.accountMissing" });
-      throw prepared.error;
-    }
+    if (reply.sent) return;
     await processAccountCleanup(app);
     return { ok: true };
   });

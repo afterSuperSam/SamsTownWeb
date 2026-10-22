@@ -1,22 +1,18 @@
-import { ArrowUpRight, BookOpenText, Github, Languages, Menu, Moon, Sun, X } from "lucide-react";
+import { Github, Languages, Menu, Moon, Sun, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router";
 import { useI18n } from "../i18n/I18nContext";
 import { useTheme } from "../theme/ThemeContext";
 import { recordPageView } from "../services/webDataRepository";
-import { safeExternalUrl } from "../lib/externalUrl";
-import { BilibiliIcon, KookIcon } from "./BrandIcons";
-import { DiamondGlows } from "./DiamondGlows";
+import { BilibiliIcon } from "./BrandIcons";
+import { FooterSignature } from "./FooterSignature";
 import { MandatoryPasswordDialog } from "./MandatoryPasswordDialog";
 import { useAuth } from "../state/AuthContext";
-import { MinecraftAvatar } from "../features/atlas/components/MinecraftAvatar";
-import { can } from "../domain/permissions";
-
-const SAMS_BLOG_URL = "https://blog.moesam.com";
+import { positionSpotlight } from "../lib/motion";
 
 // Shared page chrome stays fixed; scrolling only changes its surface treatment.
 export function AppShell() {
-  const { content, language, switching, switchLanguage, t } = useI18n();
+  const { language, switching, switchLanguage, t } = useI18n();
   const { theme, toggleTheme } = useTheme();
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -24,7 +20,7 @@ export function AppShell() {
   const navigationRef = useRef<HTMLElement>(null);
   const menuWasOpen = useRef(false);
   const location = useLocation();
-  const { user, profile, loading: authLoading } = useAuth();
+  const { user, loading: authLoading } = useAuth();
 
   useEffect(() => {
     setMenuOpen(false);
@@ -70,7 +66,7 @@ export function AppShell() {
   }, [menuOpen]);
 
   return (
-    <div className={`app-shell ${switching ? "language-switching" : ""}`} data-language={language}>
+    <div className={`app-shell ${switching ? "language-switching" : ""}`} data-language={language} onPointerMove={positionSpotlight}>
       <header className={`site-header ${scrolled ? "scrolled" : ""}`}>
         <div className="header-brand-group">
           <Link className="brand" to="/" aria-label={t("app.nav.home")}>
@@ -80,34 +76,30 @@ export function AppShell() {
               <small>{t("app.brandEn")}</small>
             </span>
           </Link>
-          <SamsBlogLink className="header-blog-link" />
         </div>
         <nav ref={navigationRef} className={`site-nav ${menuOpen ? "open" : ""}`} id="site-navigation" aria-label={t("app.nav.home")}>
           <NavLink to="/">{t("app.nav.home")}</NavLink>
           <NavLink to="/history">{t("app.nav.history")}</NavLink>
           <NavLink to="/map">{t("app.nav.map")}</NavLink>
-          {can(profile?.role, "resources") ? <NavLink to="/resources">{t("app.nav.resources")}</NavLink> : null}
-          {can(profile?.role, "materials:view") ? <NavLink to="/materials">{t("app.nav.materials")}</NavLink> : null}
-          {can(profile?.role, "forum:view") ? <NavLink to="/forum">{t("app.nav.forum")}</NavLink> : null}
           {!user && !authLoading ? <NavLink to="/account">{t("app.nav.signIn")}</NavLink> : null}
+          <button type="button" className="icon-control mobile-language-control" onClick={switchLanguage} aria-label={t("app.language")}>
+            <Languages size={17} />
+          </button>
         </nav>
         <div className="header-actions">
-          {user && profile ? <Link className="icon-control account-control" to="/account" aria-label={t("app.nav.account")} title={t("app.nav.account")}><MinecraftAvatar username={profile.username} size={32} alt="" /></Link> : null}
-          <button type="button" className="icon-control" onClick={switchLanguage} aria-label={t("app.language")}>
-            <Languages size={17} /><span>{t(language === "zh-CN" ? "app.language.shortZh" : "app.language.shortEn")}</span>
+          <button type="button" className="icon-control header-language-control" onClick={switchLanguage} aria-label={t("app.language")}>
+            <Languages size={17} />
+          </button>
+          <button
+            type="button"
+            className="icon-control theme-control"
+            onClick={event => toggleTheme(event.detail ? { x: event.clientX, y: event.clientY } : undefined)}
+            aria-label={t(theme === "dark" ? "app.theme.toLight" : "app.theme.toDark")}
+          >
+            {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
           </button>
           <button
             ref={menuButtonRef}
-            type="button"
-            className="icon-control theme-control"
-            onClick={toggleTheme}
-            aria-label={t(theme === "dark" ? "app.theme.toLight" : "app.theme.toDark")}
-            aria-pressed={theme === "light"}
-            title={t(theme === "dark" ? "app.theme.toLight" : "app.theme.toDark")}
-          >
-            {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
-          <button
             type="button"
             className="icon-control mobile-menu"
             onClick={() => setMenuOpen(open => !open)}
@@ -120,37 +112,27 @@ export function AppShell() {
         </div>
       </header>
 
-      <DiamondGlows />
       <Outlet context={{ language }} />
 
       <MandatoryPasswordDialog />
 
       <footer className="site-footer">
-        <div className="footer-version"><strong>{t("app.brand")}</strong><span>v{__APP_VERSION__}</span></div>
-        <FooterSocials kookUrl={safeExternalUrl(content.settings.kookUrl, { httpsOnly: true })} />
-        <div className="footer-meta"><span>{t("app.footer.copyright")}</span><Link className="private-entry" to="/admin">{t("app.footer.private")}</Link></div>
+        <FooterSocials />
+        <FooterSignature key={location.pathname} />
+        <div className="footer-account-links">
+          <Link to="/account">{t("app.footer.profile")}</Link>
+          <Link to="/admin">{t("app.footer.private")}</Link>
+        </div>
       </footer>
     </div>
   );
 }
 
-function FooterSocials({ kookUrl }: { kookUrl: string | null }) {
+function FooterSocials() {
   const { t } = useI18n();
 
   return <nav className="footer-socials" aria-label={t("app.footer.socials")}>
-    <SamsBlogLink showIcon />
-    <a href="https://github.com/SuperSamWasHere/" target="_blank" rel="noreferrer"><Github size={17} />{t("app.nav.github")}</a>
-    <a href="https://space.bilibili.com/390142693" target="_blank" rel="noreferrer"><BilibiliIcon width={18} height={18} />{t("app.footer.bilibili")}</a>
-    {kookUrl ? <a href={kookUrl} target="_blank" rel="noreferrer"><KookIcon width={18} height={18} />{t("app.footer.kook")}</a> : null}
+    <a href="https://github.com/afterSuperSam/" target="_blank" rel="noreferrer" aria-label={t("app.nav.github")}><Github size={17} /><span>{t("app.nav.github")}</span></a>
+    <a href="https://space.bilibili.com/390142693" target="_blank" rel="noreferrer" aria-label={t("app.footer.bilibili")}><BilibiliIcon width={18} height={18} /><span>{t("app.footer.bilibili")}</span></a>
   </nav>;
-}
-
-function SamsBlogLink({ className, showIcon = false }: { className?: string; showIcon?: boolean }) {
-  const { t } = useI18n();
-
-  return <a className={className} href={SAMS_BLOG_URL} target="_blank" rel="noreferrer">
-    {showIcon ? <BookOpenText size={17} /> : null}
-    {t("app.nav.blog")}
-    <ArrowUpRight className="external-link-arrow" size={14} aria-hidden="true" />
-  </a>;
 }

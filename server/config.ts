@@ -10,22 +10,45 @@ export const config = z.object({
   // loopback proxy instead of trusting arbitrary X-Forwarded-For chains.
   API_TRUST_PROXY: z.enum(["true", "false", "loopback"]).default("false")
     .transform(value => value === "false" ? false : "loopback" as const),
-  WEB_ORIGIN: z.string().default("http://localhost:5173"),
+  WEB_ORIGIN: z.string().url().refine(value => {
+    try {
+      const origin = new URL(value);
+      return (origin.protocol === "http:" || origin.protocol === "https:")
+        && !origin.username && !origin.password
+        && origin.pathname === "/" && !origin.search && !origin.hash;
+    } catch {
+      return false;
+    }
+  }, "WEB_ORIGIN must be an http(s) origin without credentials or a path")
+    .transform(value => new URL(value).origin).default("http://localhost:5173"),
   STORAGE_CLEANUP_INTERVAL_MS: z.coerce.number().int().min(30_000).default(300_000),
+  STORAGE_CLEANUP_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(100).default(8),
+  STORAGE_CLEANUP_BATCH_SIZE: z.coerce.number().int().min(1).max(50).default(50),
+  STORAGE_CLEANUP_RETRY_BASE_MS: z.coerce.number().int().min(1_000).default(30_000),
+  STORAGE_CLEANUP_RETRY_MAX_MS: z.coerce.number().int().min(1_000).default(3_600_000),
+  API_BODY_MAX_BYTES: z.coerce.number().int().positive().default(1_048_576),
+  AUTH_RATE_WINDOW_MS: z.coerce.number().int().positive().default(900_000),
+  AUTH_LOGIN_RATE_MAX: z.coerce.number().int().positive().default(10),
+  AUTH_PASSWORD_RATE_MAX: z.coerce.number().int().positive().default(5),
+  MAP_UPLOAD_MAX_BYTES: z.coerce.number().int().positive().default(52_428_800),
+  MAP_UPLOAD_RATE_MAX: z.coerce.number().int().positive().default(3),
+  BILIBILI_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+  BLOG_API_URL: z.string().url().refine(value => {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password;
+  }, "BLOG_API_URL must be an HTTPS URL without credentials").default("https://blog.yingwutown.top/api/public/site-card.json"),
+  BLOG_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+  BLOG_RESPONSE_MAX_BYTES: z.coerce.number().int().positive().default(1_048_576),
+  BLOG_CACHE_MS: z.coerce.number().int().min(1_000).default(300_000),
+  BLOG_HOME_POST_LIMIT: z.coerce.number().int().min(1).max(3).default(3),
   ACCOUNT_CLEANUP_INTERVAL_MS: z.coerce.number().int().min(30_000).default(300_000),
-  BOT_API_URL: z.string().url().refine(value => {
-    const host = new URL(value).hostname;
-    return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
-  }, "BOT_API_URL must use a loopback host").optional(),
-  BOT_API_KEY: z.string().min(20).optional(),
-  QQ_CODE_PEPPER: z.string().min(32).optional(),
   ANALYTICS_IP_PEPPER: z.string().min(32).optional()
 }).superRefine((values, context) => {
-  const qqValues = [values.BOT_API_URL, values.BOT_API_KEY, values.QQ_CODE_PEPPER];
-  if (qqValues.some(Boolean) && !qqValues.every(Boolean)) {
+  if (values.STORAGE_CLEANUP_RETRY_MAX_MS < values.STORAGE_CLEANUP_RETRY_BASE_MS) {
     context.addIssue({
       code: "custom",
-      message: "BOT_API_URL, BOT_API_KEY and QQ_CODE_PEPPER must be configured together"
+      path: ["STORAGE_CLEANUP_RETRY_MAX_MS"],
+      message: "STORAGE_CLEANUP_RETRY_MAX_MS must be at least STORAGE_CLEANUP_RETRY_BASE_MS"
     });
   }
 }).parse(process.env);

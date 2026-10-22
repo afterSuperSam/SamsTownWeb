@@ -1,6 +1,5 @@
 import { ExternalLink, Play } from "lucide-react";
 import { useState, type ImgHTMLAttributes } from "react";
-import { createPortal } from "react-dom";
 import type { TownImage } from "../domain/types";
 import { useI18n } from "../i18n/I18nContext";
 import { safeExternalUrl } from "../lib/externalUrl";
@@ -48,7 +47,7 @@ export function TownMedia({ media, alt, className = "", interactive = true, ...i
         {cover}
       </button>
 
-      {playing ? createPortal(
+      {playing ? (
         <Dialog title={title} onClose={() => setPlaying(false)} className="town-video-dialog">
           <div className="town-video-player">
             <iframe
@@ -68,8 +67,7 @@ export function TownMedia({ media, alt, className = "", interactive = true, ...i
               </a>
             ) : null}
           </footer>
-        </Dialog>,
-        document.body
+        </Dialog>
       ) : null}
     </>
   );

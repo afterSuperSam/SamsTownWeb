@@ -10,7 +10,14 @@
     "skipLibCheck": true,
     "outDir": "../dist-server",
     "rootDir": ".",
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["**/*.ts"]
+  "include": [
+    "**/*.ts"
+  ],
+  "exclude": [
+    "**/*.test.ts"
+  ]
 }

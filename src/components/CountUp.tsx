@@ -1,26 +1,35 @@
 import { useEffect, useRef, useState } from "react";
+import { visualConfig } from "../domain/visualConfig";
 
 interface CountUpProps {
   value: number;
   duration?: number;
   pad?: number;
+  className?: string;
 }
 
-// Counts once when visible and falls back to the final value for reduced motion.
-export function CountUp({ value, duration = 800, pad = 2 }: CountUpProps) {
+// 进入视野只计数一次，数字宽度固定；减少动效时直接显示最终值。
+export function CountUp({ value, duration = visualConfig.counter.durationMilliseconds, pad = 2, className }: CountUpProps) {
   const ref = useRef<HTMLElement>(null);
   const [current, setCurrent] = useState(0);
 
   useEffect(() => {
     const element = ref.current;
     if (!element) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
+    if (preference.matches) {
       setCurrent(value);
       return;
     }
 
     let frame = 0;
     let started = false;
+    const finish = () => {
+      if (!preference.matches) return;
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      setCurrent(value);
+    };
     const observer = new IntersectionObserver(([entry]) => {
       if (!entry.isIntersecting || started) return;
       started = true;
@@ -32,13 +41,15 @@ export function CountUp({ value, duration = 800, pad = 2 }: CountUpProps) {
       };
       frame = requestAnimationFrame(tick);
       observer.disconnect();
-    }, { threshold: 0.35 });
+    }, { threshold: visualConfig.counter.visibilityThreshold });
     observer.observe(element);
+    preference.addEventListener("change", finish);
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
+      preference.removeEventListener("change", finish);
     };
   }, [duration, value]);
 
-  return <i ref={ref}>{String(current).padStart(pad, "0")}</i>;
+  return <i ref={ref} className={className} style={{ minWidth: `${Math.max(pad, String(value).length)}ch`, fontVariantNumeric: "tabular-nums" }}>{String(current).padStart(pad, "0")}</i>;
 }

@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release:
+        description: 执行完整发布验证
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -43,18 +48,22 @@ jobs:
       - name: Run unit and integration tests
         run: pnpm test
 
-      - name: Audit production dependencies
-        run: pnpm audit --prod
-
-      - name: Install browser
-        run: pnpm exec playwright install --with-deps chromium
-
-      - name: Run browser smoke tests
-        run: pnpm test:e2e
-
       - name: Build production frontend
+        if: github.event_name == 'workflow_dispatch' && inputs.release
         run: pnpm build
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
+
+      - name: Audit production dependencies
+        if: github.event_name == 'workflow_dispatch' && inputs.release
+        run: pnpm audit --prod
+
+      - name: Install browser
+        if: github.event_name == 'workflow_dispatch' && inputs.release
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run browser smoke tests
+        if: github.event_name == 'workflow_dispatch' && inputs.release
+        run: pnpm test:e2e

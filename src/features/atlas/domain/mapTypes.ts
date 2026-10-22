@@ -1,7 +1,5 @@
 export const CHUNK_SIZE = 16;
 
-export type MapStatus = "planned" | "in_progress" | "completed" | "paused" | "abandoned";
-export type MarkerIconType = "building" | "machine" | "other";
 export type SelectionTool = "point" | "rectangle" | "brush";
 
 export interface ChunkCoordinate {
@@ -27,7 +25,7 @@ export interface TownMap {
   updatedAt: string;
 }
 
-export interface MapClaim {
+export interface MapProject {
   id: string;
   mapId: string;
   ownerId: string;
@@ -35,32 +33,23 @@ export interface MapClaim {
   minecraftUsername: string;
   description: string;
   color: string;
-  status: MapStatus;
   cells: ChunkCoordinate[];
   createdAt: string;
   updatedAt: string;
+  cellCount?: number;
+  bounds?: import("./atlasConfig").ChunkBounds | null;
 }
 
-export interface MapMarker {
-  id: string;
-  mapId: string;
-  name: string;
-  iconType: MarkerIconType;
-  color: string;
-  description: string;
-  pixelX: number;
-  pixelY: number;
-  createdBy: string;
-  createdAt: string;
-  updatedAt: string;
+export interface MapListPage {
+  projects: MapProject[];
+  total: number;
 }
 
 export interface MapSnapshot {
-  claims: MapClaim[];
-  markers: MapMarker[];
+  projects: MapProject[];
 }
 
-export interface ClaimDraft {
+export interface ProjectDraft {
   id?: string;
   mapId: string;
   ownerId?: string;
@@ -68,24 +57,12 @@ export interface ClaimDraft {
   minecraftUsername: string;
   description: string;
   color: string;
-  status: MapStatus;
   cells: ChunkCoordinate[];
 }
 
-export interface SaveClaimResult {
-  claimId: string | null;
+export interface SaveProjectResult {
+  projectId: string | null;
   conflicts: ChunkCoordinate[];
-}
-
-export interface MarkerDraft {
-  id?: string;
-  mapId: string;
-  name: string;
-  iconType: MarkerIconType;
-  color: string;
-  description: string;
-  pixelX: number;
-  pixelY: number;
 }
 
 export interface MapUploadFields {

@@ -1,4 +1,4 @@
-import { CHUNK_SIZE, type ChunkCoordinate, type MapMarker } from "./mapTypes";
+import { CHUNK_SIZE, type ChunkCoordinate } from "./mapTypes";
 
 export interface ClaimRegion {
   cells: ChunkCoordinate[];
@@ -19,23 +19,6 @@ export function clampChunk(cell: ChunkCoordinate, imageWidth: number, imageHeigh
     column: Math.min(Math.max(0, cell.column), Math.ceil(imageWidth / CHUNK_SIZE) - 1),
     row: Math.min(Math.max(0, cell.row), Math.ceil(imageHeight / CHUNK_SIZE) - 1)
   };
-}
-
-export function findNearestMarker(
-  markers: MapMarker[],
-  point: { x: number; y: number },
-  radius: number
-): MapMarker | null {
-  let nearest: MapMarker | null = null;
-  let nearestDistance = Number.POSITIVE_INFINITY;
-  for (const marker of markers) {
-    const distance = Math.hypot(marker.pixelX - point.x, marker.pixelY - point.y);
-    if (distance <= radius && distance < nearestDistance) {
-      nearest = marker;
-      nearestDistance = distance;
-    }
-  }
-  return nearest;
 }
 
 export function rectangleCells(start: ChunkCoordinate, end: ChunkCoordinate): ChunkCoordinate[] {

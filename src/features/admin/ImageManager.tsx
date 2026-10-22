@@ -1,9 +1,12 @@
-import { ChevronDown, ChevronUp, GripVertical, ImagePlus, Save, Trash2, Upload, Video } from "lucide-react";
+import { OrderControls, useOrdering } from "./OrderedCollection";
+import { SaveButton, Button, IconButton } from "../../components/Button";
+import { GripVertical, ImagePlus, Trash2, Upload, Video } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { ConfirmDialog } from "../../components/Dialog";
 import { SelectField } from "../../components/SelectField";
 import { TownMedia } from "../../components/TownMedia";
 import type { TownImage, TownImageArea, TownImageLayout } from "../../domain/types";
+import { townImageAreas as areas, townImageLayouts as layouts } from "../../domain/types";
 import { getErrorTranslationKey } from "../../i18n/errors";
 import { useI18n } from "../../i18n/I18nContext";
 import type { TranslationKey } from "../../i18n/translations";
@@ -20,19 +23,14 @@ interface ImageManagerProps {
   onNotice: (message: string, tone?: "success" | "error") => void;
 }
 
-const areas: TownImageArea[] = ["hero", "story", "gallery", "join", "history", "resources", "mapHero", "materialHero", "forumHero", "other"];
 const videoAreas: TownImageArea[] = ["story", "gallery", "history", "other"];
-const layouts: TownImageLayout[] = ["standard", "wide", "tall"];
 const areaTranslationKeys: Record<TownImageArea, TranslationKey> = {
   hero: "admin.images.area.hero",
   story: "admin.images.area.story",
   gallery: "admin.images.area.gallery",
   join: "admin.images.area.join",
   history: "admin.images.area.history",
-  resources: "admin.images.area.resources",
   mapHero: "admin.images.area.mapHero",
-  materialHero: "admin.images.area.materialHero",
-  forumHero: "admin.images.area.forumHero",
   other: "admin.images.area.other"
 };
 const layoutTranslationKeys: Record<TownImageLayout, TranslationKey> = {
@@ -47,7 +45,7 @@ export function ImageManager({ images, setImages, onNotice }: ImageManagerProps)
   const { t } = useI18n();
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
-  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const { draggedId, setDraggedId, move, drop } = useOrdering(images, setImages);
   const [pendingDelete, setPendingDelete] = useState<TownImage | null>(null);
   const [videoInput, setVideoInput] = useState("");
   const [videoDraft, setVideoDraft] = useState({
@@ -69,25 +67,6 @@ export function ImageManager({ images, setImages, onNotice }: ImageManagerProps)
     setImages(images.map(image => image.id === next.id ? next : image));
   }
 
-  function move(index: number, offset: number) {
-    const target = index + offset;
-    if (target < 0 || target >= images.length) return;
-    const next = [...images];
-    [next[index], next[target]] = [next[target], next[index]];
-    setImages(next);
-  }
-
-  function drop(targetId: string) {
-    if (!draggedId || draggedId === targetId) return;
-    const sourceIndex = images.findIndex(image => image.id === draggedId);
-    const targetIndex = images.findIndex(image => image.id === targetId);
-    if (sourceIndex < 0 || targetIndex < 0) return;
-    const next = [...images];
-    const [source] = next.splice(sourceIndex, 1);
-    next.splice(targetIndex, 0, source);
-    setImages(next);
-    setDraggedId(null);
-  }
 
   async function save() {
     setBusy(true);
@@ -153,7 +132,7 @@ export function ImageManager({ images, setImages, onNotice }: ImageManagerProps)
     <div>
       <header className="admin-heading">
         <div><h2>{t("admin.images.title")}</h2><p>{t("admin.images.body")}</p></div>
-        <button type="button" className="button primary" onClick={() => void save()} disabled={busy}><Save size={17} />{t(busy ? "app.saving" : "app.save")}</button>
+        <SaveButton type="button" onClick={() => void save()} disabled={busy}></SaveButton>
       </header>
 
       <form className="panel image-upload-form" onSubmit={upload}>
@@ -168,7 +147,7 @@ export function ImageManager({ images, setImages, onNotice }: ImageManagerProps)
         <input aria-label={t("admin.images.captionEn")} placeholder={t("admin.images.captionEn")} value={draft.captionEn} onChange={event => setDraft({ ...draft, captionEn: event.target.value })} />
         <input aria-label={t("admin.images.altZh")} placeholder={t("admin.images.altZh")} value={draft.altZh} onChange={event => setDraft({ ...draft, altZh: event.target.value })} />
         <input aria-label={t("admin.images.altEn")} placeholder={t("admin.images.altEn")} value={draft.altEn} onChange={event => setDraft({ ...draft, altEn: event.target.value })} />
-        <button type="submit" className="button primary" disabled={busy || !file}><ImagePlus size={17} />{t("admin.images.upload")}</button>
+        <Button type="submit" className="primary" disabled={busy || !file}><ImagePlus size={17} />{t("admin.images.upload")}</Button>
       </form>
 
       <form className="panel video-import-form" onSubmit={importVideo}>
@@ -186,9 +165,9 @@ export function ImageManager({ images, setImages, onNotice }: ImageManagerProps)
         <FieldSelect value={videoDraft.layout} label={t("admin.images.layout")} values={layouts} optionLabel={layout => t(layoutTranslationKeys[layout as TownImageLayout])} onChange={layout => setVideoDraft({ ...videoDraft, layout: layout as TownImageLayout })} />
         <input aria-label={t("admin.images.captionZh")} placeholder={t("admin.images.captionZh")} value={videoDraft.captionZh} onChange={event => setVideoDraft({ ...videoDraft, captionZh: event.target.value })} />
         <input aria-label={t("admin.images.captionEn")} placeholder={t("admin.images.captionEn")} value={videoDraft.captionEn} onChange={event => setVideoDraft({ ...videoDraft, captionEn: event.target.value })} />
-        <button type="submit" className="button primary" disabled={busy || !videoInput.trim()}>
+        <Button type="submit" className="primary" disabled={busy || !videoInput.trim()}>
           <Video size={17} />{t(busy ? "admin.images.videoImporting" : "admin.images.videoImport")}
-        </button>
+        </Button>
       </form>
 
       <div className="image-admin-grid">
@@ -206,12 +185,12 @@ export function ImageManager({ images, setImages, onNotice }: ImageManagerProps)
             <div className="image-admin-fields">
               <span className="image-order">
                 <i className="drag-handle" draggable onDragStart={() => setDraggedId(image.id)} onDragEnd={() => setDraggedId(null)} aria-hidden="true"><GripVertical size={18} /></i>
-                <button type="button" className="order-button" disabled={index === 0} onClick={() => move(index, -1)} aria-label={t("app.moveUp")}><ChevronUp size={14} /></button>
+                <OrderControls index={index} count={images.length} onMove={offset => move(index, offset)}>
                 {t("admin.images.order", {
                   index: String(index + 1).padStart(2, "0"),
                   area: t(areaTranslationKeys[image.area])
                 })}
-                <button type="button" className="order-button" disabled={index === images.length - 1} onClick={() => move(index, 1)} aria-label={t("app.moveDown")}><ChevronDown size={14} /></button>
+                </OrderControls>
               </span>
               {image.mediaType === "bilibili" ? (
                 <small className="image-video-meta">{image.externalId} · {image.creatorName}</small>
@@ -227,7 +206,7 @@ export function ImageManager({ images, setImages, onNotice }: ImageManagerProps)
                 {t(image.visible ? "app.visible" : "app.hidden")}
               </label>
             </div>
-            <button type="button" className="icon-button danger" disabled={busy} onClick={() => setPendingDelete(image)} aria-label={t("app.delete")}><Trash2 size={17} /></button>
+            <IconButton type="button" className="danger" disabled={busy} onClick={() => setPendingDelete(image)} aria-label={t("app.delete")}><Trash2 size={17} /></IconButton>
           </article>
         ))}
       </div>

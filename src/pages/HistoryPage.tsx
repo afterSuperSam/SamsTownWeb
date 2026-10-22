@@ -1,7 +1,9 @@
+import { Button } from "../components/Button";
 import { motion, useReducedMotion, useScroll, useTransform, type MotionValue } from "motion/react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router";
 import { HeroTransition } from "../components/HeroTransition";
+import { SectionNavigation } from "../components/SectionNavigation";
 import { MediaFigure } from "../components/MediaFigure";
 import { MemberDirectory } from "../components/MemberDirectory";
 import { PageLoading } from "../components/TerrainLoading";
@@ -91,7 +93,7 @@ export function HistoryPage() {
 
   useEffect(() => {
     if (!ready) return;
-    const targetId = location.hash === "#members" ? "members" : location.hash === "#gallery" ? "gallery" : null;
+    const targetId = ["#archive", "#members", "#gallery", "#timeline"].includes(location.hash) ? location.hash.slice(1) : null;
     if (!targetId) return;
     const frame = requestAnimationFrame(() => document.getElementById(targetId)?.scrollIntoView({ block: "start" }));
     return () => cancelAnimationFrame(frame);
@@ -172,15 +174,23 @@ export function HistoryPage() {
 
   return (
     <main className="history-page ambient-page">
-      <header className="history-hero page-hero">
+      <SectionNavigation sections={[
+        { id: "archive", label: t("history.title") },
+        { id: "members", label: t("history.members.title") },
+        ...(galleryMedia.length ? [{ id: "gallery", label: t("home.gallery.title") }] : []),
+        { id: "timeline", label: t("history.timeline.title") }
+      ]} />
+      <header className="history-hero page-hero" id="archive">
         {heroImage ? (
-          <TownImage
-            className="history-hero-image page-hero-image"
-            source={heroImage.sourceUrl}
-            alt={language === "zh-CN" ? heroImage.altZh : heroImage.altEn}
-            loading="eager"
-            fetchPriority="high"
-          />
+          <div className="page-hero-media">
+            <TownImage
+              className="history-hero-image page-hero-image"
+              source={heroImage.sourceUrl}
+              alt={language === "zh-CN" ? heroImage.altZh : heroImage.altEn}
+              loading="eager"
+              fetchPriority="high"
+            />
+          </div>
         ) : null}
         <div className="page-hero-shade" />
         <div className="history-hero-copy hero-copy-sequence">
@@ -198,7 +208,7 @@ export function HistoryPage() {
           <h2>{t("history.members.title")}</h2>
           <p>{t("history.members.body")}</p>
         </header>
-        <MemberDirectory members={members} language={language} linkProfiles={false} />
+        <MemberDirectory members={members} language={language} />
       </section>
 
       {galleryMedia.length ? (
@@ -221,19 +231,19 @@ export function HistoryPage() {
             ))}
           </div>
           {galleryMedia.length > galleryPreviewCount ? (
-            <button
-              className="button archive-gallery-toggle"
+            <Button
+              className="archive-gallery-toggle text-action"
               type="button"
               aria-expanded={galleryExpanded}
               onClick={() => setGalleryExpanded(current => !current)}
             >
               {t(galleryExpanded ? "history.gallery.collapse" : "history.gallery.showAll")}
-            </button>
+            </Button>
           ) : null}
         </section>
       ) : null}
 
-      <header className="content-section archive-section-heading history-timeline-heading" data-reveal>
+      <header className="content-section archive-section-heading history-timeline-heading" id="timeline" data-reveal>
         <span className="eyebrow">03 / HISTORY</span>
         <h2>{t("history.timeline.title")}</h2>
         <p>{t("history.timeline.body")}</p>

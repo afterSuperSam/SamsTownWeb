@@ -10,7 +10,7 @@ export function createVisitorIdentity(ipAddress: string, pepper: string) {
   };
 }
 
-export function maskIpAddress(ipAddress: string): string {
+function maskIpAddress(ipAddress: string): string {
   const normalized = ipAddress.replace(/^::ffff:/, "");
   const ipv4 = normalized.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (ipv4) return `${ipv4[1]}.${ipv4[2]}.${ipv4[3]}.*`;

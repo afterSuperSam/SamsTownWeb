@@ -1,4 +1,5 @@
-import { Database, ImagePlus, Languages, LogOut, Save, Settings, Shield } from "lucide-react";
+import { Button, SaveButton } from "../components/Button";
+import { Database, ImagePlus, Languages, LogOut, Settings, Shield } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactElement, type ReactNode } from "react";
 import { ConfirmDialog } from "../components/Dialog";
 import { SelectField } from "../components/SelectField";
@@ -6,13 +7,10 @@ import { PageLoading } from "../components/TerrainLoading";
 import { defaultContent } from "../domain/defaults";
 import { MAX_HOME_MEMBERS } from "../domain/memberPolicy";
 import { roleLabels } from "../domain/permissions";
-import type { FaqItem, HistoryEvent, SiteContent, TownAnnouncement, TownImage, TownMember } from "../domain/types";
+import type { FaqItem, HistoryEvent, SiteContent, TownImage, TownMember } from "../domain/types";
 import { AccountsPanel } from "../features/admin/AccountsPanel";
 import { ImageManager } from "../features/admin/ImageManager";
-import { ForumManagementPanel } from "../features/admin/ForumManagementPanel";
-import { QqBindingPanel } from "../features/auth/QqBindingPanel";
 import { OrderedCollection } from "../features/admin/OrderedCollection";
-import { ResourceManagementPanel } from "../features/admin/ResourceManagementPanel";
 import { WebDataPanel } from "../features/admin/WebDataPanel";
 import { getErrorTranslationKey } from "../i18n/errors";
 import { useI18n } from "../i18n/I18nContext";
@@ -20,19 +18,19 @@ import { translations, translationGroups, type TranslationKey } from "../i18n/tr
 import { signOut, updateAccountDetails } from "../services/authService";
 import {
   getSiteBundle,
+  getTownHistory,
   replaceFaqs,
   replaceHistory,
   replaceMembers,
-  replaceAnnouncements,
   saveContent
 } from "../services/siteRepository";
 import { useAuth } from "../state/AuthContext";
 
-type Tab = "content" | "images" | "members" | "faq" | "history" | "announcements" | "resources" | "analytics" | "profile" | "accounts" | "system";
+type Tab = "content" | "images" | "members" | "faq" | "history" | "analytics" | "profile" | "accounts" | "system";
 type SiteDataStatus = "loading" | "ready" | "error";
-type AdminNotice = { id: number; message: string; tone: "success" | "error" } | null;
+type AdminNotice = { id: number; message: string; tone: "success" | "error"; translationKey?: TranslationKey } | null;
 
-const dataTabs = new Set<Tab>(["content", "images", "members", "faq", "history", "announcements", "system"]);
+const dataTabs = new Set<Tab>(["content", "images", "members", "faq", "history", "system"]);
 const memberGroups: TownMember["group"][] = ["primary", "town", "friend"];
 const blankMember = (): TownMember => ({
   id: crypto.randomUUID(),
@@ -54,20 +52,6 @@ const blankHistory = (): HistoryEvent => ({
   bodyZh: "",
   bodyEn: "",
   imageId: null,
-  showOnHome: false,
-  sortOrder: 0
-});
-const blankAnnouncement = (): TownAnnouncement => ({
-  id: crypto.randomUUID(),
-  kind: "announcement",
-  titleZh: "",
-  titleEn: "",
-  subtitleZh: "",
-  subtitleEn: "",
-  bodyZh: "",
-  bodyEn: "",
-  imageId: null,
-  visible: true,
   sortOrder: 0
 });
 const blankFaq = (): FaqItem => ({
@@ -80,7 +64,7 @@ const blankFaq = (): FaqItem => ({
   sortOrder: 0
 });
 
-// Unified Owner workspace ---------------------------------------------------
+// 后台共享完整内容草稿；各编辑器只维护自己的展示状态。
 export function AdminPage() {
   const { profile, user, refreshProfile } = useAuth();
   const { t, reloadContent } = useI18n();
@@ -89,17 +73,18 @@ export function AdminPage() {
   const [members, setMembers] = useState<TownMember[]>([]);
   const [history, setHistory] = useState<HistoryEvent[]>([]);
   const [faqs, setFaqs] = useState<FaqItem[]>([]);
-  const [announcements, setAnnouncements] = useState<TownAnnouncement[]>([]);
   const [images, setImages] = useState<TownImage[]>([]);
+  const [memberQuery, setMemberQuery] = useState("");
+  const [memberGroupFilter, setMemberGroupFilter] = useState<"all" | TownMember["group"]>("all");
   const [notice, setNotice] = useState<AdminNotice>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<SiteDataStatus>("loading");
   const loadRevision = useRef(0);
   const noticeTimer = useRef<number | undefined>(undefined);
 
-  const showNotice = useCallback((message: string, tone: "success" | "error" = "success") => {
+  const showNotice = useCallback((message: string, tone: "success" | "error" = "success", translationKey?: TranslationKey) => {
     window.clearTimeout(noticeTimer.current);
-    setNotice({ id: Date.now(), message, tone });
+    setNotice({ id: Date.now(), message, tone, translationKey });
     noticeTimer.current = window.setTimeout(() => setNotice(null), tone === "success" ? 3000 : 5000);
   }, []);
 
@@ -107,21 +92,20 @@ export function AdminPage() {
     const revision = ++loadRevision.current;
     setStatus("loading");
     try {
-      const bundle = await getSiteBundle({ refreshContent: true });
+      const [bundle, historyEvents] = await Promise.all([getSiteBundle({ refreshContent: true }), getTownHistory()]);
       if (revision !== loadRevision.current) return;
       setContent(bundle.content);
       setMembers(bundle.members);
-      setHistory(bundle.history);
+      setHistory(historyEvents);
       setFaqs(bundle.faqs);
-      setAnnouncements(bundle.announcements);
       setImages(bundle.images);
       setStatus("ready");
     } catch (error) {
       if (revision !== loadRevision.current) return;
-      showNotice(t(getErrorTranslationKey(error)), "error");
+      showNotice("", "error", getErrorTranslationKey(error));
       setStatus("error");
     }
-  }, [showNotice, t]);
+  }, [showNotice]);
 
   useEffect(() => {
     void loadData();
@@ -133,16 +117,16 @@ export function AdminPage() {
 
   async function run(action: () => Promise<void>): Promise<boolean> {
     if (status !== "ready") {
-      showNotice(t("admin.saveBlocked"), "error");
+      showNotice("", "error", "admin.saveBlocked");
       return false;
     }
     setBusy(true);
     try {
       await action();
-      showNotice(t("admin.saved"));
+      showNotice("", "success", "admin.saved");
       return true;
     } catch (error) {
-      showNotice(t(getErrorTranslationKey(error)), "error");
+      showNotice("", "error", getErrorTranslationKey(error));
       return false;
     } finally {
       setBusy(false);
@@ -153,7 +137,7 @@ export function AdminPage() {
     try {
       await signOut();
     } catch (error) {
-      showNotice(t(getErrorTranslationKey(error)), "error");
+      showNotice("", "error", getErrorTranslationKey(error));
     }
   }
 
@@ -162,13 +146,29 @@ export function AdminPage() {
     window.scrollTo(0, 0);
   }
 
+  function clearMemberFilters() {
+    setMemberQuery("");
+    setMemberGroupFilter("all");
+  }
+
+  function createMember() {
+    clearMemberFilters();
+    return blankMember();
+  }
+
   const tabs: Array<[Tab, ReactElement, TranslationKey]> = [
     ["content", <Languages size={17} />, "admin.nav.content"],
     ["images", <ImagePlus size={17} />, "admin.nav.images"],
-    ["resources", <Settings size={17} />, "admin.nav.site"],
+    ["analytics", <Settings size={17} />, "admin.nav.site"],
     ["profile", <Shield size={17} />, "admin.nav.accounts"]
   ];
   const featuredMemberCount = members.filter(member => member.showOnHome).length;
+  const normalizedMemberQuery = memberQuery.trim().toLocaleLowerCase();
+  const memberFilterActive = memberGroupFilter !== "all" || normalizedMemberQuery !== "";
+  const matchesMemberFilter = (member: TownMember) =>
+    (memberGroupFilter === "all" || member.group === memberGroupFilter)
+    && member.username.toLocaleLowerCase().includes(normalizedMemberQuery);
+  const visibleMemberCount = members.filter(matchesMemberFilter).length;
 
   return (
     <main className="admin-layout ambient-page">
@@ -176,20 +176,20 @@ export function AdminPage() {
         <div>
           <span className="eyebrow">{t("admin.title")}</span>
           <h1>{t("admin.workspace")}</h1>
-          <p>{profile?.username} · {profile?.role ? roleLabels[profile.role] : ""}</p>
+          <p>{profile?.username} · {profile?.role ? t(roleLabels[profile.role]) : ""}</p>
         </div>
-        <nav>
+        <nav aria-label={t("admin.workspace")}>
           {tabs.map(([key, icon, label]) => (
-            <button type="button" className={adminModule(tab) === adminModule(key) ? "active" : ""} onClick={() => selectTab(key)} key={key}>{icon}{t(label)}</button>
+            <button type="button" className={adminModule(tab) === adminModule(key) ? "active" : ""} aria-current={adminModule(tab) === adminModule(key) ? "page" : undefined} onClick={() => selectTab(key)} key={key}>{icon}{t(label)}</button>
           ))}
         </nav>
-        <button type="button" className="button" onClick={() => void leaveAdmin()}><LogOut size={16} />{t("admin.signOut")}</button>
+        <Button type="button"  onClick={() => void leaveAdmin()}><LogOut size={16} />{t("admin.signOut")}</Button>
       </aside>
 
       <section className="admin-main">
         {notice ? (
-          <div className={`admin-toast ${notice.tone}`} role={notice.tone === "error" ? "alert" : "status"} aria-live="polite" key={notice.id}>
-            {notice.message}
+          <div className={`admin-toast ${notice.tone}`} role={notice.tone === "error" ? "alert" : "status"} aria-live={notice.tone === "error" ? "assertive" : "polite"} key={notice.id}>
+            {notice.translationKey ? t(notice.translationKey) : notice.message}
           </div>
         ) : null}
         {dataTabs.has(tab) && status !== "ready" ? <DataGate status={status} retry={loadData} /> : null}
@@ -209,9 +209,15 @@ export function AdminPage() {
         {status === "ready" && tab === "images" ? <ImageManager images={images} setImages={setImages} onNotice={showNotice} /> : null}
         {status === "ready" && tab === "members" ? (
           <EditorSection title={t("admin.members.title")} body={t("admin.members.body")} busy={busy} onSave={() => void run(() => replaceMembers(members))}>
-            <OrderedCollection items={members} setItems={setMembers} createItem={blankMember} addLabel={t("admin.members.add")} fieldClassName="member-editor-fields" scrollable render={(member, update) => (
+            <div className="member-filters">
+              <label>{t("admin.members.search")}<input type="search" autoComplete="off" value={memberQuery} placeholder={t("admin.members.searchPlaceholder")} onChange={event => setMemberQuery(event.target.value)} /></label>
+              <label>{t("admin.members.group")}<SelectField value={memberGroupFilter} label={t("admin.members.group")} disabled={busy} options={[{ value: "all", label: t("admin.members.allGroups") }, ...memberGroups.map(group => ({ value: group, label: t(`home.members.${group}`) }))]} onChange={setMemberGroupFilter} /></label>
+              {memberFilterActive ? <Button type="button" onClick={clearMemberFilters}>{t("admin.members.clearFilters")}</Button> : null}
+            </div>
+            <p className="muted" role="status">{t("admin.members.matchCount", { count: visibleMemberCount, total: members.length })}{memberFilterActive ? ` ${t("admin.members.filteredOrderHint")}` : ""}</p>
+            <OrderedCollection items={members} setItems={setMembers} createItem={createMember} filterItem={matchesMemberFilter} reorderable={!memberFilterActive} disabled={busy} emptyLabel={t("admin.members.empty")} addLabel={t("admin.members.add")} fieldClassName="member-editor-fields" scrollable render={(member, update) => (
               <>
-                <input aria-label={t("app.username")} placeholder={t("app.username")} value={member.username} onChange={event => update({ ...member, username: event.target.value })} />
+                <input aria-label={t("admin.members.username")} placeholder={t("admin.members.username")} autoComplete="off" value={member.username} onChange={event => update({ ...member, username: event.target.value })} />
                 <input aria-label={t("admin.members.roleZh")} placeholder={t("admin.members.roleZh")} value={member.roleZh} onChange={event => update({ ...member, roleZh: event.target.value })} />
                 <input aria-label={t("admin.members.roleEn")} placeholder={t("admin.members.roleEn")} value={member.roleEn} onChange={event => update({ ...member, roleEn: event.target.value })} />
                 <div className="member-group-picker segmented-control" role="group" aria-label={t("admin.members.group")}>
@@ -241,7 +247,7 @@ export function AdminPage() {
         ) : null}
         {status === "ready" && tab === "faq" ? (
           <EditorSection title={t("admin.faq.title")} body={t("admin.faq.body")} busy={busy} onSave={() => void run(() => replaceFaqs(faqs))}>
-            <OrderedCollection items={faqs} setItems={setFaqs} createItem={blankFaq} addLabel={t("admin.faq.add")} fieldClassName="faq-editor-fields" render={(faq, update) => (
+            <OrderedCollection items={faqs} setItems={setFaqs} createItem={blankFaq} disabled={busy} addLabel={t("admin.faq.add")} fieldClassName="faq-editor-fields" render={(faq, update) => (
               <>
                 <input aria-label={t("admin.faq.questionZh")} placeholder={t("admin.faq.questionZh")} value={faq.questionZh} onChange={event => update({ ...faq, questionZh: event.target.value })} />
                 <input aria-label={t("admin.faq.questionEn")} placeholder={t("admin.faq.questionEn")} value={faq.questionEn} onChange={event => update({ ...faq, questionEn: event.target.value })} />
@@ -254,7 +260,7 @@ export function AdminPage() {
         ) : null}
         {status === "ready" && tab === "history" ? (
           <EditorSection title={t("admin.history.title")} body={t("admin.history.body")} busy={busy} onSave={() => void run(() => replaceHistory(history))}>
-            <OrderedCollection items={history} setItems={setHistory} createItem={blankHistory} addLabel={t("admin.history.add")} scrollable render={(event, update) => (
+            <OrderedCollection items={history} setItems={setHistory} createItem={blankHistory} disabled={busy} addLabel={t("admin.history.add")} scrollable render={(event, update) => (
               <>
                 <input aria-label={t("admin.history.date")} placeholder={t("admin.history.date")} value={event.date} onChange={change => update({ ...event, date: change.target.value })} />
                 <input aria-label={t("admin.history.titleZh")} placeholder={t("admin.history.titleZh")} value={event.titleZh} onChange={change => update({ ...event, titleZh: change.target.value })} />
@@ -264,65 +270,18 @@ export function AdminPage() {
                 <SelectField
                   value={event.imageId ?? ""}
                   label={t("admin.history.image")}
+                  disabled={busy}
                   options={[{ value: "", label: t("admin.history.noImage") }, ...images.filter(image => image.visible).map(image => ({ value: image.id, label: image.captionZh || image.sourceUrl }))]}
                   onChange={imageId => update({ ...event, imageId: imageId || null })}
                 />
-                <label className="visibility-toggle">
-                  <input type="checkbox" checked={event.showOnHome} onChange={change => update({ ...event, showOnHome: change.target.checked })} />
-                  {t("admin.history.showOnHome")}
-                </label>
               </>
             )} />
           </EditorSection>
         ) : null}
-        {status === "ready" && tab === "announcements" ? (
-          <EditorSection
-            title={t("admin.announcements.title")}
-            body={t("admin.announcements.body")}
-            busy={busy}
-            onSave={() => void run(() => replaceAnnouncements(announcements))}
-          >
-            <OrderedCollection
-              items={announcements}
-              setItems={setAnnouncements}
-              createItem={blankAnnouncement}
-              addLabel={t("admin.announcements.add")}
-              fieldClassName="announcement-editor-fields"
-              render={(item, update) => (
-                <>
-                  <SelectField
-                    value={item.kind}
-                    label={t("admin.announcements.kind")}
-                    options={[
-                      { value: "announcement", label: t("home.announcements.announcement") },
-                      { value: "affair", label: t("home.announcements.affair") }
-                    ]}
-                    onChange={kind => update({ ...item, kind })}
-                  />
-                  <input aria-label={t("admin.announcements.titleZh")} placeholder={t("admin.announcements.titleZh")} value={item.titleZh} onChange={event => update({ ...item, titleZh: event.target.value })} />
-                  <input aria-label={t("admin.announcements.titleEn")} placeholder={t("admin.announcements.titleEn")} value={item.titleEn} onChange={event => update({ ...item, titleEn: event.target.value })} />
-                  <input aria-label={t("admin.announcements.subtitleZh")} placeholder={t("admin.announcements.subtitleZh")} value={item.subtitleZh} onChange={event => update({ ...item, subtitleZh: event.target.value })} />
-                  <input aria-label={t("admin.announcements.subtitleEn")} placeholder={t("admin.announcements.subtitleEn")} value={item.subtitleEn} onChange={event => update({ ...item, subtitleEn: event.target.value })} />
-                  <textarea aria-label={t("admin.announcements.bodyZh")} placeholder={t("admin.announcements.bodyZh")} value={item.bodyZh} onChange={event => update({ ...item, bodyZh: event.target.value })} />
-                  <textarea aria-label={t("admin.announcements.bodyEn")} placeholder={t("admin.announcements.bodyEn")} value={item.bodyEn} onChange={event => update({ ...item, bodyEn: event.target.value })} />
-                  <SelectField
-                    value={item.imageId ?? ""}
-                    label={t("admin.announcements.image")}
-                    options={[{ value: "", label: t("admin.history.noImage") }, ...images.filter(image => image.visible && image.mediaType === "image").map(image => ({ value: image.id, label: image.captionZh || image.sourceUrl }))]}
-                    onChange={imageId => update({ ...item, imageId: imageId || null })}
-                  />
-                  <label className="visibility-toggle"><input type="checkbox" checked={item.visible} onChange={event => update({ ...item, visible: event.target.checked })} />{t(item.visible ? "app.visible" : "app.hidden")}</label>
-                </>
-              )}
-            />
-          </EditorSection>
-        ) : null}
-        {tab === "announcements" ? <ForumManagementPanel onNotice={showNotice} /> : null}
-        {tab === "resources" ? <ResourceManagementPanel onNotice={showNotice} /> : null}
         {tab === "analytics" ? <WebDataPanel onNotice={showNotice} /> : null}
         {tab === "profile" ? (
           <>
-            <ProfilePanel username={profile?.username ?? ""} email={user?.email ?? ""} refreshProfile={refreshProfile} onNotice={showNotice} />
+            <ProfilePanel username={profile?.username ?? ""} refreshProfile={refreshProfile} onNotice={showNotice} />
           </>
         ) : null}
         {tab === "accounts" ? <AccountsPanel currentUserId={user?.id ?? ""} onNotice={showNotice} /> : null}
@@ -349,9 +308,9 @@ export function AdminPage() {
 }
 
 function adminModule(tab: Tab): "content" | "media" | "site" | "accounts" {
-  if (["content", "members", "faq", "history", "announcements"].includes(tab)) return "content";
+  if (["content", "members", "faq", "history"].includes(tab)) return "content";
   if (tab === "images") return "media";
-  if (["resources", "analytics", "system"].includes(tab)) return "site";
+  if (["analytics", "system"].includes(tab)) return "site";
   return "accounts";
 }
 
@@ -360,27 +319,27 @@ function AdminSectionNav({ tab, selectTab }: { tab: Tab; selectTab: (tab: Tab) =
   const groups: Record<ReturnType<typeof adminModule>, Array<[Tab, TranslationKey]>> = {
     content: [
       ["content", "admin.nav.copy"], ["faq", "admin.nav.faq"], ["history", "admin.nav.history"],
-      ["members", "admin.nav.members"], ["announcements", "admin.nav.announcements"]
+      ["members", "admin.nav.members"]
     ],
     media: [["images", "admin.nav.images"]],
-    site: [["resources", "admin.nav.resources"], ["analytics", "admin.nav.analytics"], ["system", "admin.nav.system"]],
+    site: [["analytics", "admin.nav.analytics"], ["system", "admin.nav.system"]],
     accounts: [["profile", "admin.nav.profile"], ["accounts", "admin.nav.accounts"]]
   };
   const options = groups[adminModule(tab)];
   if (options.length < 2) return null;
   return <nav className="admin-section-nav" aria-label={t("admin.title")}>
-    {options.map(([key, label]) => <button type="button" className={tab === key ? "active" : ""} onClick={() => selectTab(key)} key={key}>{t(label)}</button>)}
+    {options.map(([key, label]) => <button type="button" className={tab === key ? "active" : ""} aria-current={tab === key ? "page" : undefined} onClick={() => selectTab(key)} key={key}>{t(label)}</button>)}
   </nav>;
 }
 
 function DataGate({ status, retry }: { status: SiteDataStatus; retry: () => Promise<void> }) {
   const { t } = useI18n();
-  if (status === "loading") return <PageLoading label={t("app.loading.terrain")} />;
+  if (status === "loading") return <PageLoading label={t("app.loading.admin")} />;
   return (
     <section className="panel admin-data-state" role="alert">
       <Database size={24} />
       <div><h2>{t("admin.loadError")}</h2><p>{t("admin.loadErrorBody")}</p></div>
-      <button className="button primary" type="button" onClick={() => void retry()}>{t("app.retry")}</button>
+      <Button className="primary" type="button" onClick={() => void retry()}>{t("app.retry")}</Button>
     </section>
   );
 }
@@ -392,12 +351,11 @@ function EditorSection({ title, body, busy, onSave, children }: {
   onSave: () => void;
   children: ReactNode;
 }) {
-  const { t } = useI18n();
   return (
     <div>
       <header className="admin-heading">
         <div><h2>{title}</h2><p>{body}</p></div>
-        <button type="button" className="button primary" onClick={onSave} disabled={busy}><Save size={17} />{t(busy ? "app.saving" : "app.save")}</button>
+        <SaveButton type="button" onClick={onSave} busy={busy}></SaveButton>
       </header>
       <fieldset className="admin-editor-fields" disabled={busy}>{children}</fieldset>
     </div>
@@ -430,12 +388,12 @@ function ContentEditor({ content, setContent, busy, onSave }: {
     <div>
       <header className="admin-heading">
         <div><h2>{t("admin.copy.title")}</h2><p>{t("admin.copy.overrides")}</p></div>
-        <button type="button" className="button primary" onClick={onSave} disabled={busy}><Save size={17} />{t(busy ? "app.saving" : "app.save")}</button>
+        <SaveButton type="button" onClick={onSave} busy={busy}></SaveButton>
       </header>
       <fieldset className="admin-editor-fields" disabled={busy}>
         <label className="copy-group-select">
           {t("admin.copy.group")}
-          <SelectField value={group} label={t("admin.copy.group")} options={translationGroups.map(item => ({ value: item.id, label: item.id.toUpperCase() }))} onChange={setGroup} />
+          <SelectField value={group} label={t("admin.copy.group")} disabled={busy} options={translationGroups.map(item => ({ value: item.id, label: t(`admin.copy.groups.${item.id}`) }))} onChange={setGroup} />
         </label>
         <div className="editor-grid">
           {keys.map(key => {
@@ -462,23 +420,20 @@ function SettingsEditor({ content, setContent }: { content: SiteContent; setCont
     <section className="settings-editor">
       <h3>{t("admin.settings.title")}</h3>
       <label>{t("admin.settings.qq")}<input value={content.settings.qqGroup} onChange={event => set("qqGroup", event.target.value)} /></label>
-      <label>{t("admin.settings.mayorQq")}<input value={content.settings.mayorQq} onChange={event => set("mayorQq", event.target.value)} /></label>
       <label>{t("admin.settings.kook")}<input type="url" value={content.settings.kookUrl} onChange={event => set("kookUrl", event.target.value)} /></label>
-      <label>{t("admin.settings.survey")}<input type="url" value={content.settings.surveyUrl} onChange={event => set("surveyUrl", event.target.value)} /></label>
     </section>
   );
 }
 
-function ProfilePanel({ username, email, refreshProfile, onNotice }: {
+function ProfilePanel({ username, refreshProfile, onNotice }: {
   username: string;
-  email: string;
   refreshProfile: () => Promise<void>;
   onNotice: (message: string, tone?: "success" | "error") => void;
 }) {
   const { t } = useI18n();
-  const [form, setForm] = useState({ username, email, password: "" });
+  const [form, setForm] = useState({ username, password: "" });
   const [busy, setBusy] = useState(false);
-  useEffect(() => setForm(current => ({ ...current, username, email })), [email, username]);
+  useEffect(() => setForm(current => ({ ...current, username })), [username]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -500,12 +455,10 @@ function ProfilePanel({ username, email, refreshProfile, onNotice }: {
     <div>
       <header className="admin-heading"><div><h2>{t("admin.profile.title")}</h2><p>{t("admin.profile.body")}</p></div></header>
       <form className="profile-form form-stack" onSubmit={submit}>
-        <label>{t("app.username")}<input minLength={2} maxLength={32} value={form.username} onChange={event => setForm({ ...form, username: event.target.value })} required /></label>
-        <label>{t("app.email")}<input type="email" value={form.email} onChange={event => setForm({ ...form, email: event.target.value })} required /></label>
-        <label>{t("admin.profile.newPassword")}<input type="password" minLength={10} placeholder={t("admin.profile.passwordHint")} value={form.password} onChange={event => setForm({ ...form, password: event.target.value })} /></label>
-        <button type="submit" className="button primary" disabled={busy}><Save size={17} />{t(busy ? "app.saving" : "admin.profile.save")}</button>
+        <label>{t("app.username")}<input minLength={2} maxLength={32} disabled={busy} value={form.username} onChange={event => setForm({ ...form, username: event.target.value })} required /></label>
+        <label>{t("admin.profile.newPassword")}<input type="password" minLength={10} disabled={busy} placeholder={t("admin.profile.passwordHint")} value={form.password} onChange={event => setForm({ ...form, password: event.target.value })} /></label>
+        <SaveButton type="submit" busy={busy}>{t("admin.profile.save")}</SaveButton>
       </form>
-      <QqBindingPanel />
     </div>
   );
 }
@@ -524,14 +477,16 @@ function SystemPanel({ content, setContent, busy: saving, onSave, applyDefaults 
     <div>
       <header className="admin-heading">
         <div><h2>{t("admin.system.title")}</h2><p>{t("admin.system.body")}</p></div>
-        <button type="button" className="button primary" onClick={onSave} disabled={saving}><Save size={17} />{t(saving ? "app.saving" : "app.save")}</button>
+        <SaveButton type="button" onClick={onSave} busy={saving}></SaveButton>
       </header>
-      <SettingsEditor content={content} setContent={setContent} />
-      <section className="panel system-card">
-        <Languages size={28} />
-        <div><h3>{t("admin.system.defaultsTitle")}</h3><p>{t("admin.system.defaultsBody")}</p></div>
-        <button type="button" className="button" onClick={() => setConfirmDefaults(true)}>{t("admin.system.defaultsAction")}</button>
-      </section>
+      <fieldset className="admin-editor-fields" disabled={saving || busy}>
+        <SettingsEditor content={content} setContent={setContent} />
+        <section className="panel system-card">
+          <Languages size={28} />
+          <div><h3>{t("admin.system.defaultsTitle")}</h3><p>{t("admin.system.defaultsBody")}</p></div>
+          <Button type="button" disabled={saving || busy} onClick={() => setConfirmDefaults(true)}>{t("admin.system.defaultsAction")}</Button>
+        </section>
+      </fieldset>
       {confirmDefaults ? (
         <ConfirmDialog
           title={t("admin.system.defaultsTitle")}

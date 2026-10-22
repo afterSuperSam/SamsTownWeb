@@ -142,47 +142,6 @@ export type Database = {
         }
         Relationships: []
       }
-      forum_posts: {
-        Row: {
-          author_id: string | null
-          author_username: string
-          body: string
-          created_at: string
-          id: string
-          kind: string
-          title: string
-          updated_at: string
-        }
-        Insert: {
-          author_id?: string | null
-          author_username?: string
-          body: string
-          created_at?: string
-          id?: string
-          kind: string
-          title: string
-          updated_at?: string
-        }
-        Update: {
-          author_id?: string | null
-          author_username?: string
-          body?: string
-          created_at?: string
-          id?: string
-          kind?: string
-          title?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "forum_posts_author_id_fkey"
-            columns: ["author_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       game_servers: {
         Row: {
           created_at: string
@@ -249,11 +208,11 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "map_claim_cells_claim_id_fkey"
-            columns: ["claim_id"]
+            foreignKeyName: "map_claim_cells_claim_map_foreign_key"
+            columns: ["claim_id", "map_id"]
             isOneToOne: false
             referencedRelation: "map_claims"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "map_id"]
           },
           {
             foreignKeyName: "map_claim_cells_map_id_fkey"
@@ -274,7 +233,6 @@ export type Database = {
           minecraft_username: string
           owner_id: string
           project_name: string
-          status: string
           updated_at: string
         }
         Insert: {
@@ -286,7 +244,6 @@ export type Database = {
           minecraft_username: string
           owner_id: string
           project_name: string
-          status?: string
           updated_at?: string
         }
         Update: {
@@ -298,7 +255,6 @@ export type Database = {
           minecraft_username?: string
           owner_id?: string
           project_name?: string
-          status?: string
           updated_at?: string
         }
         Relationships: [
@@ -312,227 +268,6 @@ export type Database = {
           {
             foreignKeyName: "map_claims_owner_id_fkey"
             columns: ["owner_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      map_markers: {
-        Row: {
-          color: string
-          created_at: string
-          created_by: string
-          description: string
-          icon_type: string
-          id: string
-          map_id: string
-          name: string
-          pixel_x: number
-          pixel_y: number
-          updated_at: string
-        }
-        Insert: {
-          color: string
-          created_at?: string
-          created_by: string
-          description?: string
-          icon_type: string
-          id?: string
-          map_id: string
-          name: string
-          pixel_x: number
-          pixel_y: number
-          updated_at?: string
-        }
-        Update: {
-          color?: string
-          created_at?: string
-          created_by?: string
-          description?: string
-          icon_type?: string
-          id?: string
-          map_id?: string
-          name?: string
-          pixel_x?: number
-          pixel_y?: number
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "map_markers_created_by_fkey"
-            columns: ["created_by"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "map_markers_map_id_fkey"
-            columns: ["map_id"]
-            isOneToOne: false
-            referencedRelation: "town_maps"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      material_assignments: {
-        Row: {
-          amount: number
-          claimant_id: string | null
-          claimant_username: string
-          completed: boolean
-          completed_at: string | null
-          created_at: string
-          id: string
-          item_id: string
-          note: string
-          updated_at: string
-          updated_by: string | null
-          updated_by_username: string
-        }
-        Insert: {
-          amount: number
-          claimant_id?: string | null
-          claimant_username: string
-          completed?: boolean
-          completed_at?: string | null
-          created_at?: string
-          id?: string
-          item_id: string
-          note?: string
-          updated_at?: string
-          updated_by?: string | null
-          updated_by_username?: string
-        }
-        Update: {
-          amount?: number
-          claimant_id?: string | null
-          claimant_username?: string
-          completed?: boolean
-          completed_at?: string | null
-          created_at?: string
-          id?: string
-          item_id?: string
-          note?: string
-          updated_at?: string
-          updated_by?: string | null
-          updated_by_username?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "material_assignments_claimant_id_fkey"
-            columns: ["claimant_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "material_assignments_item_id_fkey"
-            columns: ["item_id"]
-            isOneToOne: false
-            referencedRelation: "material_items"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "material_assignments_updated_by_fkey"
-            columns: ["updated_by"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      material_items: {
-        Row: {
-          id: string
-          image_url: string | null
-          initial_available_count: number
-          item_id: string
-          mismatched_count: number
-          name_en: string
-          name_zh: string
-          project_id: string
-          sort_order: number
-          source_missing_count: number
-          total_count: number
-        }
-        Insert: {
-          id?: string
-          image_url?: string | null
-          initial_available_count: number
-          item_id: string
-          mismatched_count?: number
-          name_en: string
-          name_zh: string
-          project_id: string
-          sort_order?: number
-          source_missing_count: number
-          total_count: number
-        }
-        Update: {
-          id?: string
-          image_url?: string | null
-          initial_available_count?: number
-          item_id?: string
-          mismatched_count?: number
-          name_en?: string
-          name_zh?: string
-          project_id?: string
-          sort_order?: number
-          source_missing_count?: number
-          total_count?: number
-        }
-        Relationships: [
-          {
-            foreignKeyName: "material_items_project_id_fkey"
-            columns: ["project_id"]
-            isOneToOne: false
-            referencedRelation: "material_projects"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      material_projects: {
-        Row: {
-          created_at: string
-          creator_id: string | null
-          creator_username: string
-          id: string
-          name: string
-          priority: number
-          source_date: string
-          source_title: string
-          storage_location: string
-          updated_at: string
-        }
-        Insert: {
-          created_at?: string
-          creator_id?: string | null
-          creator_username: string
-          id?: string
-          name: string
-          priority?: number
-          source_date?: string
-          source_title?: string
-          storage_location?: string
-          updated_at?: string
-        }
-        Update: {
-          created_at?: string
-          creator_id?: string | null
-          creator_username?: string
-          id?: string
-          name?: string
-          priority?: number
-          source_date?: string
-          source_title?: string
-          storage_location?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "material_projects_creator_id_fkey"
-            columns: ["creator_id"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
@@ -577,7 +312,6 @@ export type Database = {
           created_at: string
           id: string
           must_change_password: boolean
-          qq_registration_pending: boolean
           role: Database["public"]["Enums"]["app_role"]
           updated_at: string
           username: string
@@ -586,7 +320,6 @@ export type Database = {
           created_at?: string
           id: string
           must_change_password?: boolean
-          qq_registration_pending?: boolean
           role?: Database["public"]["Enums"]["app_role"]
           updated_at?: string
           username: string
@@ -595,145 +328,11 @@ export type Database = {
           created_at?: string
           id?: string
           must_change_password?: boolean
-          qq_registration_pending?: boolean
           role?: Database["public"]["Enums"]["app_role"]
           updated_at?: string
           username?: string
         }
         Relationships: []
-      }
-      resources: {
-        Row: {
-          author: string
-          created_at: string
-          created_by: string | null
-          current_version: string
-          description: string
-          external_id: string | null
-          game_versions: string[]
-          icon_url: string | null
-          id: string
-          latest_version: string
-          loaders: string[]
-          name: string
-          project_type: string
-          project_updated_at: string | null
-          resource_type: string
-          source: Database["public"]["Enums"]["resource_source"]
-          tags: string[]
-          update_available: boolean
-          update_checked_at: string | null
-          updated_at: string
-          url: string
-        }
-        Insert: {
-          author?: string
-          created_at?: string
-          created_by?: string | null
-          current_version?: string
-          description?: string
-          external_id?: string | null
-          game_versions?: string[]
-          icon_url?: string | null
-          id?: string
-          latest_version?: string
-          loaders?: string[]
-          name: string
-          project_type?: string
-          project_updated_at?: string | null
-          resource_type?: string
-          source: Database["public"]["Enums"]["resource_source"]
-          tags?: string[]
-          update_available?: boolean
-          update_checked_at?: string | null
-          updated_at?: string
-          url: string
-        }
-        Update: {
-          author?: string
-          created_at?: string
-          created_by?: string | null
-          current_version?: string
-          description?: string
-          external_id?: string | null
-          game_versions?: string[]
-          icon_url?: string | null
-          id?: string
-          latest_version?: string
-          loaders?: string[]
-          name?: string
-          project_type?: string
-          project_updated_at?: string | null
-          resource_type?: string
-          source?: Database["public"]["Enums"]["resource_source"]
-          tags?: string[]
-          update_available?: boolean
-          update_checked_at?: string | null
-          updated_at?: string
-          url?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "resources_created_by_fkey"
-            columns: ["created_by"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      schematics: {
-        Row: {
-          author: string
-          category: string
-          created_at: string
-          created_by: string | null
-          description: string
-          file_name: string
-          file_size: number
-          id: string
-          mime_type: string
-          name: string
-          storage_path: string
-          updated_at: string
-        }
-        Insert: {
-          author: string
-          category?: string
-          created_at?: string
-          created_by?: string | null
-          description?: string
-          file_name: string
-          file_size: number
-          id?: string
-          mime_type?: string
-          name: string
-          storage_path: string
-          updated_at?: string
-        }
-        Update: {
-          author?: string
-          category?: string
-          created_at?: string
-          created_by?: string | null
-          description?: string
-          file_name?: string
-          file_size?: number
-          id?: string
-          mime_type?: string
-          name?: string
-          storage_path?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "schematics_created_by_fkey"
-            columns: ["created_by"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       server_commands: {
         Row: {
@@ -953,62 +552,6 @@ export type Database = {
           },
         ]
       }
-      town_announcements: {
-        Row: {
-          body_en: string
-          body_zh: string
-          created_at: string
-          id: string
-          image_id: string | null
-          is_visible: boolean
-          kind: string
-          sort_order: number
-          subtitle_en: string
-          subtitle_zh: string
-          title_en: string
-          title_zh: string
-          updated_at: string
-        }
-        Insert: {
-          body_en?: string
-          body_zh?: string
-          created_at?: string
-          id?: string
-          image_id?: string | null
-          is_visible?: boolean
-          kind?: string
-          sort_order?: number
-          subtitle_en?: string
-          subtitle_zh?: string
-          title_en?: string
-          title_zh: string
-          updated_at?: string
-        }
-        Update: {
-          body_en?: string
-          body_zh?: string
-          created_at?: string
-          id?: string
-          image_id?: string | null
-          is_visible?: boolean
-          kind?: string
-          sort_order?: number
-          subtitle_en?: string
-          subtitle_zh?: string
-          title_en?: string
-          title_zh?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "town_announcements_image_id_fkey"
-            columns: ["image_id"]
-            isOneToOne: false
-            referencedRelation: "town_images"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       town_images: {
         Row: {
           alt_en: string
@@ -1198,43 +741,6 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      commit_town_map_image: {
-        Args: {
-          p_clear_existing: boolean
-          p_image_height: number
-          p_image_width: number
-          p_map_id: string
-          p_max_level: number
-          p_original_path: string
-          p_storage_prefix: string
-          p_tile_revision: string
-          p_tile_size: number
-        }
-        Returns: {
-          created_at: string
-          created_by: string
-          description: string
-          id: string
-          image_height: number
-          image_width: number
-          is_visible: boolean
-          max_level: number
-          name: string
-          original_path: string
-          short_label: string
-          sort_order: number
-          storage_prefix: string
-          tile_revision: string
-          tile_size: number
-          updated_at: string
-        }
-        SetofOptions: {
-          from: "*"
-          to: "town_maps"
-          isOneToOne: true
-          isSetofReturn: false
-        }
-      }
       commit_town_map_image_v2: {
         Args: {
           p_clear_existing: boolean
@@ -1269,134 +775,23 @@ export type Database = {
           isSetofReturn: true
         }
       }
-      get_resource_stats: {
-        Args: never
-        Returns: {
-          datapack: number
-          github: number
-          plugin: number
-          total: number
-          updates: number
-        }[]
-      }
       get_page_view_analytics: {
         Args: { p_days?: number }
         Returns: Json
       }
-      list_account_qq_bindings: {
-        Args: never
-        Returns: {
-          qq_number: string
-          user_id: string
-          verified_at: string
-        }[]
+      // 按待应用的 20261020041649 迁移同步；部署后用 CLI 再生成核对。
+      get_map_claim_detail: {
+        Args: { p_map_id: string; p_claim_id: string }
+        Returns: Json
       }
-      create_material_project_server: {
+      list_map_claim_summaries: {
         Args: {
-          p_actor_id: string
-          p_materials: Json
-          p_name: string
-          p_priority: number
-          p_source_date: string
-          p_source_title: string
-          p_storage_location: string
-          p_projection_origin_x: number
-          p_projection_origin_y: number
-          p_projection_origin_z: number
-          p_projection_mirror: string
-          p_projection_rotation: number
-        }
-        Returns: string
-      }
-      update_material_projection: {
-        Args: {
-          p_project_id: string
-          p_origin_x: number
-          p_origin_y: number
-          p_origin_z: number
-          p_mirror: string
-          p_rotation: number
-          p_file_name?: string | null
-          p_storage_path?: string | null
-          p_file_size?: number | null
-        }
-        Returns: string | null
-      }
-      get_material_workspace: { Args: never; Returns: Json }
-      admin_delete_material_project: {
-        Args: { p_project_id: string }
-        Returns: undefined
-      }
-      admin_delete_resource: {
-        Args: { p_resource_id: string }
-        Returns: undefined
-      }
-      admin_update_material_project: {
-        Args: {
-          p_name: string
-          p_priority: number
-          p_project_id: string
-          p_storage_location: string
-        }
-        Returns: undefined
-      }
-      admin_update_resource_details: {
-        Args: {
-          p_description: string
-          p_name: string
-          p_resource_id: string
-        }
-        Returns: undefined
-      }
-      list_public_resource_previews: {
-        Args: never
-        Returns: {
-          author: string
-          created_at: string
-          created_by: string | null
-          current_version: string
-          description: string
-          external_id: string | null
-          game_versions: string[]
-          icon_url: string | null
-          id: string
-          latest_version: string
-          loaders: string[]
-          name: string
-          project_type: string
-          project_updated_at: string | null
-          resource_type: string
-          source: Database["public"]["Enums"]["resource_source"]
-          tags: string[]
-          update_available: boolean
-          update_checked_at: string | null
-          updated_at: string
-          url: string
-        }[]
-        SetofOptions: {
-          from: "*"
-          to: "resources"
-          isOneToOne: false
-          isSetofReturn: true
-        }
-      }
-      list_forum_posts: {
-        Args: {
-          p_author_id?: string | null
-          p_kind?: string | null
-          p_limit?: number
+          p_map_id: string
+          p_query?: string
           p_offset?: number
+          p_limit?: number
         }
-        Returns: {
-          author_id: string | null
-          author_username: string
-          body: string
-          created_at: string
-          id: string
-          kind: string
-          title: string
-          updated_at: string
-        }[]
+        Returns: Json
       }
       list_map_owners: {
         Args: never
@@ -1407,12 +802,6 @@ export type Database = {
           username: string
         }[]
       }
-      list_resource_loaders: {
-        Args: never
-        Returns: {
-          loader: string
-        }[]
-      }
       mark_password_changed: { Args: never; Returns: undefined }
       prepare_account_deletion: {
         Args: { p_actor_id: string; p_target_id: string }
@@ -1420,10 +809,6 @@ export type Database = {
       }
       queue_own_storage_cleanup: {
         Args: { p_bucket: string; p_path: string }
-        Returns: undefined
-      }
-      queue_shared_file_deletion: {
-        Args: { p_file_id: string }
         Returns: undefined
       }
       queue_town_image_deletion: {
@@ -1440,7 +825,6 @@ export type Database = {
         Returns: undefined
       }
       replace_faq_items: { Args: { items: Json }; Returns: undefined }
-      replace_town_announcements: { Args: { items: Json }; Returns: undefined }
       replace_town_history: { Args: { items: Json }; Returns: undefined }
       replace_town_members: { Args: { items: Json }; Returns: undefined }
       resolve_profile_id: { Args: { login_username: string }; Returns: string }
@@ -1454,38 +838,8 @@ export type Database = {
           p_minecraft_username: string
           p_owner_id?: string
           p_project_name: string
-          p_status: string
         }
         Returns: Json
-      }
-      set_material_claim: {
-        Args: { p_amount: number; p_item_id: string; p_note: string }
-        Returns: string | null
-      }
-      set_material_claims: {
-        Args: { p_amounts: number[] | null; p_item_ids: string[]; p_note: string }
-        Returns: number
-      }
-      set_material_claim_completed: {
-        Args: { p_assignment_id: string; p_completed: boolean; p_note?: string }
-        Returns: undefined
-      }
-      set_material_claims_completed: {
-        Args: { p_assignment_ids: string[]; p_completed: boolean; p_note?: string }
-        Returns: number
-      }
-      update_material_project: {
-        Args: { p_priority: number; p_project_id: string; p_storage_location: string }
-        Returns: undefined
-      }
-      update_resource_check: {
-        Args: {
-          p_checked_at: string
-          p_latest_version: string
-          p_resource_id: string
-          p_update_available: boolean
-        }
-        Returns: undefined
       }
       update_own_username: {
         Args: { next_username: string }
@@ -1495,7 +849,6 @@ export type Database = {
     Enums: {
       app_role: "owner" | "admin" | "member" | "viewer"
       command_status: "pending" | "sent" | "succeeded" | "failed" | "expired"
-      resource_source: "modrinth" | "github" | "minecraft"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1625,7 +978,6 @@ export const Constants = {
     Enums: {
       app_role: ["owner", "admin", "member", "viewer"],
       command_status: ["pending", "sent", "succeeded", "failed", "expired"],
-      resource_source: ["modrinth", "github", "minecraft"],
     },
   },
 } as const

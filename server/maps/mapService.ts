@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import type { FastifyBaseLogger } from "fastify";
 import { supabaseAdmin } from "../supabaseAdmin.js";
 import { queueStorageCleanup } from "../storageCleanupQueue.js";
-import { TaskSemaphore } from "../taskQueue.js";
 import { cleanupStagedMap, generateMapTiles, type StagedMapImage } from "./mapTilePipeline.js";
 import { removeMapPrefix, uploadMapAssets } from "./mapStorage.js";
 
@@ -28,19 +27,13 @@ const extensionByMime: Record<string, string> = {
   "image/webp": "webp",
   "image/tiff": "tiff"
 };
-const mapConversions = new TaskSemaphore(1);
-
 export async function createTownMap(image: StagedMapImage, fields: MapFields, actorId: string, log: FastifyBaseLogger) {
-  return mapConversions.run(() => createTownMapSerialized(image, fields, actorId, log));
-}
-
-async function createTownMapSerialized(image: StagedMapImage, fields: MapFields, actorId: string, log: FastifyBaseLogger) {
   const id = randomUUID();
   const revision = randomUUID();
   const prefix = `${id}/${revision}`;
   try {
     const tiles = await generateMapTiles(image);
-    const originalPath = await uploadMapAssets(image, tiles, prefix, requireExtension(image.mimetype));
+    const originalPath = await uploadMapAssets(image, tiles, prefix, requireExtension(image.mimetype), log);
     const { data, error } = await supabaseAdmin.from("town_maps").insert({
       id,
       name: fields.name,
@@ -80,10 +73,6 @@ export async function updateTownMap(id: string, fields: MapFields) {
 }
 
 export async function replaceTownMapImage(id: string, image: StagedMapImage, clearExisting: boolean, log: FastifyBaseLogger) {
-  return mapConversions.run(() => replaceTownMapImageSerialized(id, image, clearExisting, log));
-}
-
-async function replaceTownMapImageSerialized(id: string, image: StagedMapImage, clearExisting: boolean, log: FastifyBaseLogger) {
   const existingResult = await supabaseAdmin.from("town_maps").select("*").eq("id", id).single();
   if (existingResult.error) {
     await cleanupStagedMapSafely(image, log);
@@ -100,7 +89,7 @@ async function replaceTownMapImageSerialized(id: string, image: StagedMapImage, 
       error.statusCode = 409;
       throw error;
     }
-    const originalPath = await uploadMapAssets(image, tiles, prefix, requireExtension(image.mimetype));
+    const originalPath = await uploadMapAssets(image, tiles, prefix, requireExtension(image.mimetype), log);
     const { data, error } = await supabaseAdmin.rpc("commit_town_map_image_v2", {
       p_map_id: id,
       p_image_width: tiles.width,
@@ -132,8 +121,11 @@ export async function deleteTownMap(id: string, confirmName: string, log: Fastif
     error.statusCode = 400;
     throw error;
   }
-  const { error } = await supabaseAdmin.from("town_maps").delete().eq("id", id);
+  // 仅删除已确认的版本，避免换图或改名并发时误删新地图并遗留文件。
+  const { data, error } = await supabaseAdmin.from("town_maps").delete().eq("id", id)
+    .eq("storage_prefix", existingResult.data.storage_prefix).eq("name", confirmName).select("id").maybeSingle();
   if (error) throw mapDatabaseError(error);
+  if (!data) throw Object.assign(new Error("error.mapDataChanged"), { statusCode: 409 });
   await removeMapPrefixSafely(existingResult.data.storage_prefix, log);
   return { ok: true as const };
 }

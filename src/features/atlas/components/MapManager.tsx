@@ -1,4 +1,5 @@
-import { ImagePlus, Save, Trash2, Upload } from "lucide-react";
+import { Button, SaveButton } from "../../../components/Button";
+import { ImagePlus, Trash2, Upload } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { Dialog } from "../../../components/Dialog";
 import { getErrorTranslationKey } from "../../../i18n/errors";
@@ -101,7 +102,7 @@ export function MapManager({ maps, activeMap, onClose, onChanged, onNotice }: {
   }
 
   return (
-    <Dialog title={t("map.manage.title")} onClose={() => { if (!busy) onClose(); }} className="map-manager-dialog">
+    <Dialog title={t("map.manage.title")} onClose={onClose} dismissible={!busy} className="map-manager-dialog">
       <div className="map-manager-layout">
         <nav className="map-manager-list">
           <button type="button" className={selectedId === "new" ? "active" : ""} onClick={() => setSelectedId("new")}><ImagePlus size={16} />{t("map.manage.upload")}</button>
@@ -111,13 +112,13 @@ export function MapManager({ maps, activeMap, onClose, onChanged, onNotice }: {
           <form className="map-editor-form map-manager-form" onSubmit={create}>
             <MapFields fields={fields} setFields={setFields} />
             <FilePicker file={file} onFile={setFile} label={t("map.manage.file")} />
-            <div className="button-row end map-field-wide"><button type="submit" className="button primary" disabled={busy || !file}><Upload size={16} />{t(busy ? "map.manage.uploading" : "map.manage.upload")}</button></div>
+            <div className="button-row end map-field-wide"><Button type="submit" className="primary" disabled={busy || !file}><Upload size={16} />{t(busy ? "map.manage.uploading" : "map.manage.upload")}</Button></div>
           </form>
         ) : (
           <div className="map-manager-sections">
             <form className="map-editor-form map-manager-form" onSubmit={saveMetadata}>
               <MapFields fields={fields} setFields={setFields} />
-              <div className="button-row end map-field-wide"><button type="submit" className="button primary" disabled={busy}><Save size={16} />{t("app.save")}</button></div>
+              <div className="button-row end map-field-wide"><SaveButton type="submit" busy={busy}></SaveButton></div>
             </form>
             <section className="map-manager-danger">
               <h3>{t("map.manage.replace")}</h3>
@@ -129,7 +130,7 @@ export function MapManager({ maps, activeMap, onClose, onChanged, onNotice }: {
               <h3>{t("map.manage.delete")}</h3>
               <p>{t("map.manage.deleteHint", { name: selected.name })}</p>
               <input value={deleteName} onChange={event => setDeleteName(event.target.value)} />
-              <button type="button" className="button danger" disabled={busy || deleteName !== selected.name} onClick={() => void remove()}><Trash2 size={16} />{t("map.manage.delete")}</button>
+              <Button type="button" className="danger" disabled={busy || deleteName !== selected.name} onClick={() => void remove()}><Trash2 size={16} />{t("map.manage.delete")}</Button>
             </section>
           </div>
         )}

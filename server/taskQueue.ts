@@ -29,11 +29,14 @@ export class TaskSemaphore {
       throw Object.assign(new Error("error.serverBusy"), { statusCode: 503 });
     }
     await new Promise<void>(resolve => this.waiters.push(resolve));
-    this.active += 1;
   }
 
   private release(): void {
+    const next = this.waiters.shift();
+    if (next) {
+      next();
+      return;
+    }
     this.active -= 1;
-    this.waiters.shift()?.();
   }
 }

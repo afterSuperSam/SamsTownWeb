@@ -1,51 +1,63 @@
-import { Layers3, Menu, Plus, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Button } from "../components/Button";
+import { Layers3, Menu, Pencil, Plus, X } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import { ConfirmDialog } from "../components/Dialog";
+import { ConfirmDialog, Dialog } from "../components/Dialog";
 import { HeroTransition } from "../components/HeroTransition";
 import { TownImage } from "../components/TownImage";
 import { SelectField } from "../components/SelectField";
 import { PageLoading } from "../components/TerrainLoading";
-import { RetryNotice } from "../components/RetryNotice";
+import { Notice, RetryNotice } from "../components/RetryNotice";
 import { can } from "../domain/permissions";
 import type { Profile } from "../domain/types";
-import { ClaimEditor } from "../features/atlas/components/ClaimEditor";
+import { ProjectEditor } from "../features/atlas/components/ProjectEditor";
+import { MinecraftAvatar } from "../features/atlas/components/MinecraftAvatar";
 import { MapManager } from "../features/atlas/components/MapManager";
-import { MarkerEditor } from "../features/atlas/components/MarkerEditor";
 import { MapSidebar } from "../features/atlas/components/MapSidebar";
 import { MapToolbar } from "../features/atlas/components/MapToolbar";
 import { MapViewport, type MapViewportHandle } from "../features/atlas/components/MapViewport";
 import {
-  deleteClaim,
-  deleteMarker,
+  deleteProject,
   listMapOwners,
-  saveClaim,
-  saveMarker
+  saveProject
 } from "../features/atlas/data/mapRepository";
-import { mayEditClaim } from "../features/atlas/domain/mapPermissions";
-import type { ChunkCoordinate, MapClaim, MapMarker, MarkerDraft, SelectionTool } from "../features/atlas/domain/mapTypes";
+import { mayEditProject } from "../features/atlas/domain/mapPermissions";
+import type { ChunkCoordinate, MapProject, SelectionTool } from "../features/atlas/domain/mapTypes";
 import { useMapData } from "../features/atlas/hooks/useMapData";
+import { atlasConfig, containsCell } from "../features/atlas/domain/atlasConfig";
 import { getErrorTranslationKey } from "../i18n/errors";
 import { useI18n } from "../i18n/I18nContext";
 import { useTownHero } from "../hooks/useTownHero";
 import { useAuth } from "../state/AuthContext";
 
+// 地图读取错误保留分类，部署异常转换为访客可理解的恢复提示。
+function getMapLoadErrorTranslationKey(error: unknown) {
+  const key = getErrorTranslationKey(error);
+  return key === "error.migrationRequired" ? "map.error.dataUnavailable" : key;
+}
+
 export function AtlasPage() {
   const { user, profile } = useAuth();
   const { language, t } = useI18n();
-  const data = useMapData();
+  const data = useMapData(JSON.stringify([
+    user?.id ?? null, profile?.id ?? null, profile?.role ?? null, Boolean(profile?.mustChangePassword)
+  ]));
   const navigate = useNavigate();
   const viewportRef = useRef<MapViewportHandle>(null);
   const noticeTimer = useRef<number | null>(null);
   const { image: heroImage, ready: heroReady, error: heroError, retry: retryHero } = useTownHero("mapHero");
   const [selection, setSelection] = useState<ChunkCoordinate[]>([]);
+  const validatedChanges = useRef(new Set<string>());
+  const operationScope = `${data.scope}:${data.activeMapId}:${data.activeMap?.tileRevision}`;
+  const operationScopeRef = useRef(operationScope);
+  operationScopeRef.current = operationScope;
   const [tool, setTool] = useState<SelectionTool>("point");
   const [subtract, setSubtract] = useState(false);
-  const [activeClaimId, setActiveClaimId] = useState<string | null>(null);
-  const [claimEditor, setClaimEditor] = useState<MapClaim | "new" | null>(null);
-  const [editingClaim, setEditingClaim] = useState<MapClaim | null>(null);
-  const [markerEditor, setMarkerEditor] = useState<{ marker?: MapMarker; point: { x: number; y: number } } | null>(null);
-  const [markerPlacement, setMarkerPlacement] = useState(false);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [projectEditor, setProjectEditor] = useState<MapProject | "new" | null>(null);
+  const [editingProject, setEditingProject] = useState<MapProject | null>(null);
+  const [projectDetail, setProjectDetail] = useState<MapProject | null>(null);
+  const detailRequest = useRef(0);
   const [managerOpen, setManagerOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [owners, setOwners] = useState<Profile[]>([]);
@@ -55,11 +67,12 @@ export function AtlasPage() {
   const [pendingLeave, setPendingLeave] = useState<
     { kind: "map"; id: string } | { kind: "route"; href: string } | null
   >(null);
-  const canClaim = can(profile?.role, "map:claim");
-  const canManage = can(profile?.role, "map:manage");
+  const mapAccessReady = Boolean(user && profile && user.id === profile.id && !profile.mustChangePassword);
+  const canCreateProject = mapAccessReady && can(profile?.role, "map:project");
+  const canManage = mapAccessReady && can(profile?.role, "map:manage");
 
   useEffect(() => {
-    if (!canManage) return;
+    if (!canManage) { setOwners([]); return; }
     let cancelled = false;
     void listMapOwners().then(nextOwners => {
       if (!cancelled) setOwners(nextOwners);
@@ -67,7 +80,7 @@ export function AtlasPage() {
       if (!cancelled) showNotice(t(getErrorTranslationKey(error)), "error");
     });
     return () => { cancelled = true; };
-  }, [canManage, t]);
+  }, [canManage, data.scope, t]);
 
   useEffect(() => {
     const update = () => setOnline(navigator.onLine);
@@ -109,19 +122,25 @@ export function AtlasPage() {
     if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setSelection([]);
-    setActiveClaimId(null);
-    setMarkerPlacement(false);
-    setEditingClaim(null);
-  }, [data.activeMapId]);
+    validatedChanges.current.clear();
+    setActiveProjectId(null);
+    setProjectDetail(null);
+    detailRequest.current += 1;
+    setEditingProject(null);
+    setProjectEditor(null);
+    setManagerOpen(false);
+  }, [data.activeMapId, data.scope, data.activeMap?.tileRevision]);
 
-  const activeClaim = useMemo(() => data.snapshot.claims.find(claim => claim.id === activeClaimId) ?? null, [activeClaimId, data.snapshot.claims]);
+  useLayoutEffect(() => { setOwners([]); }, [data.scope]);
+
+  const activeProject = useMemo(() => data.snapshot.projects.find(project => project.id === activeProjectId) ?? null, [activeProjectId, data.snapshot.projects]);
 
   function showNotice(message: string, tone: "success" | "error" = "success") {
     if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
     setNotice({ message, tone });
-    noticeTimer.current = window.setTimeout(() => setNotice(null), 3600);
+    noticeTimer.current = window.setTimeout(() => setNotice(null), atlasConfig.noticeDuration);
   }
 
   function changeMap(id: string) {
@@ -142,28 +161,70 @@ export function AtlasPage() {
     else navigate(action.href);
   }
 
-  function editClaim(claim: MapClaim) {
-    setSelection(claim.cells);
-    setActiveClaimId(claim.id);
-    setEditingClaim(claim);
-    setClaimEditor(null);
+  async function viewProject(project: MapProject) {
+    const requestScope = operationScope;
+    const request = ++detailRequest.current;
+    setActiveProjectId(project.id);
+    viewportRef.current?.focusProject(project);
     setSidebarOpen(false);
-    showNotice(t("map.claim.editingArea", { name: claim.projectName }));
+    setProjectDetail(project);
+    try {
+      const detail = await data.loadProjectDetail(project.id);
+      if (detail && request === detailRequest.current && requestScope === operationScopeRef.current) setProjectDetail(detail);
+    } catch (error) {
+      if (request === detailRequest.current && requestScope === operationScopeRef.current) showNotice(t(getErrorTranslationKey(error)), "error");
+    }
   }
 
-  async function persistClaim(draft: Parameters<typeof saveClaim>[0]) {
+  async function editProject(project: MapProject) {
+    if (!(canCreateProject || canManage)) return;
+    const requestScope = operationScope;
+    setBusy(true);
+    try {
+      const detail = await data.loadProjectDetail(project.id);
+      if (!detail || requestScope !== operationScopeRef.current || !mayEditProject(profile?.role, user?.id, detail)) return;
+      validatedChanges.current.clear();
+      setSelection(detail.cells);
+      setActiveProjectId(detail.id);
+      setEditingProject(detail);
+      setProjectDetail(null);
+      detailRequest.current += 1;
+      setProjectEditor(null);
+      setSidebarOpen(false);
+      showNotice(t("map.claim.editingArea", { name: detail.projectName }));
+    } catch (error) {
+      showNotice(t(getErrorTranslationKey(error)), "error");
+    } finally { setBusy(false); }
+  }
+
+  async function persistProject(draft: Parameters<typeof saveProject>[0]) {
+    if (!(canCreateProject || canManage) || (draft.id && editingProject?.id !== draft.id)) return;
+    const originalCells = new Set(editingProject?.cells.map(cell => `${cell.column}:${cell.row}`) ?? []);
+    const desiredCells = new Set(draft.cells.map(cell => `${cell.column}:${cell.row}`));
+    const changedCells = [
+      ...draft.cells.filter(cell => !originalCells.has(`${cell.column}:${cell.row}`)),
+      ...(editingProject?.cells.filter(cell => !desiredCells.has(`${cell.column}:${cell.row}`)) ?? [])
+    ];
+    if (!changedCells.every(cell => validatedChanges.current.has(`${cell.column}:${cell.row}`))) {
+      showNotice(t("map.error.unloadedSelection"), "error");
+      return;
+    }
     if (!online) {
       showNotice(t("map.offline"), "error");
       return;
     }
     setBusy(true);
+    const requestScope = operationScope;
     try {
-      const result = await saveClaim(draft);
+      const result = await saveProject(draft);
+      if (requestScope !== operationScopeRef.current) return;
       await data.refreshSnapshot();
-      setClaimEditor(null);
-      setEditingClaim(null);
-      setActiveClaimId(result.claimId);
+      if (requestScope !== operationScopeRef.current) return;
+      setProjectEditor(null);
+      setEditingProject(null);
+      setActiveProjectId(result.projectId);
       setSelection(result.conflicts);
+      validatedChanges.current = new Set(result.conflicts.map(cell => `${cell.column}:${cell.row}`));
       showNotice(t(result.conflicts.length ? "map.error.conflict" : "admin.saved"), result.conflicts.length ? "error" : "success");
     } catch (error) {
       showNotice(t(getErrorTranslationKey(error)), "error");
@@ -172,15 +233,19 @@ export function AtlasPage() {
     }
   }
 
-  async function removeClaim(claim: MapClaim) {
+  async function removeProject(project: MapProject) {
+    if (!(canCreateProject || canManage) || !mayEditProject(profile?.role, user?.id, project)) return;
+    const requestScope = operationScope;
     setBusy(true);
     try {
-      await deleteClaim(claim.id);
+      await deleteProject(project.id);
+      if (requestScope !== operationScopeRef.current) return;
       await data.refreshSnapshot();
-      setClaimEditor(null);
-      setEditingClaim(null);
+      if (requestScope !== operationScopeRef.current) return;
+      setProjectEditor(null);
+      setEditingProject(null);
       setSelection([]);
-      setActiveClaimId(null);
+      setActiveProjectId(null);
       showNotice(t("admin.saved"));
     } catch (error) {
       showNotice(t(getErrorTranslationKey(error)), "error");
@@ -189,40 +254,12 @@ export function AtlasPage() {
     }
   }
 
-  async function persistMarker(draft: MarkerDraft) {
-    setBusy(true);
-    try {
-      await saveMarker(draft);
-      await data.refreshSnapshot();
-      setMarkerEditor(null);
-      showNotice(t("admin.saved"));
-    } catch (error) {
-      showNotice(t(getErrorTranslationKey(error)), "error");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function removeMarker(marker: MapMarker) {
-    setBusy(true);
-    try {
-      await deleteMarker(marker.id);
-      await data.refreshSnapshot();
-      setMarkerEditor(null);
-      showNotice(t("admin.saved"));
-    } catch (error) {
-      showNotice(t(getErrorTranslationKey(error)), "error");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (data.loading || !heroReady) return <PageLoading label={t("app.loading.terrain")} />;
+  if (data.loading || data.snapshotLoading || !heroReady) return <PageLoading label={t("app.loading.terrain")} />;
 
   return (
     <main className="map-page ambient-page">
       <header className="map-hero page-hero hero-copy-sequence">
-        {heroImage ? <TownImage className="map-hero-image page-hero-image" source={heroImage.sourceUrl} alt={language === "zh-CN" ? heroImage.altZh : heroImage.altEn} loading="eager" fetchPriority="high" /> : null}
+        {heroImage ? <div className="page-hero-media"><TownImage className="map-hero-image page-hero-image" source={heroImage.sourceUrl} alt={language === "zh-CN" ? heroImage.altZh : heroImage.altEn} loading="eager" fetchPriority="high" /></div> : null}
         <div className="page-hero-shade" />
         <span className="eyebrow">{t("map.eyebrow")}</span>
         <h1>{t("map.title")}</h1>
@@ -246,64 +283,67 @@ export function AtlasPage() {
           <button type="button" className="map-mobile-sidebar" onClick={() => setSidebarOpen(open => !open)} aria-expanded={sidebarOpen}>{sidebarOpen ? <X size={17} /> : <Menu size={17} />}{t("map.sidebar.claims")}</button>
         </div>
 
+        {data.activeMap && data.snapshotError ? (
+          <Notice className="map-snapshot-notice">
+            <span>{t(getMapLoadErrorTranslationKey(data.snapshotError))}</span>
+            <Button type="button" className="secondary small" onClick={() => void data.refreshSnapshot().catch(error => showNotice(t(getMapLoadErrorTranslationKey(error)), "error"))}>{t("app.retry")}</Button>
+          </Notice>
+        ) : null}
         {data.mapsError ? (
-          <div className="map-empty-state"><p>{t(getErrorTranslationKey(data.mapsError))}</p><button type="button" className="button secondary" onClick={() => void data.refreshMaps()}>{t("app.retry")}</button></div>
+          <div className="map-empty-state"><p>{t(getMapLoadErrorTranslationKey(data.mapsError))}</p><Button type="button" className="secondary" onClick={() => void data.refreshMaps().catch(error => showNotice(t(getMapLoadErrorTranslationKey(error)), "error"))}>{t("app.retry")}</Button></div>
         ) : !data.activeMap ? (
-          <div className="map-empty-state"><h2>{t("map.empty.title")}</h2><p>{t("map.empty.body")}</p>{canManage ? <button type="button" className="button primary" onClick={() => setManagerOpen(true)}><Plus size={17} />{t("map.manage.upload")}</button> : null}</div>
+          <div className="map-empty-state"><h2>{t("map.empty.title")}</h2><p>{t("map.empty.body")}</p>{canManage ? <Button type="button" className="primary" onClick={() => setManagerOpen(true)}><Plus size={17} />{t("map.manage.upload")}</Button> : null}</div>
         ) : (
           <div className={`map-workspace ${sidebarOpen ? "sidebar-open" : ""}`}>
             <MapSidebar
-              claims={data.snapshot.claims}
-              markers={data.snapshot.markers}
-              currentUserId={user?.id}
-              canManage={canManage}
-              canEditClaim={claim => mayEditClaim(profile?.role, user?.id, claim)}
-              onFocusClaim={claim => { setActiveClaimId(claim.id); viewportRef.current?.focusClaim(claim); setSidebarOpen(false); }}
-              onFocusMarker={marker => { viewportRef.current?.focusMarker(marker); setSidebarOpen(false); }}
-              onEditClaim={editClaim}
-              onEditMarker={marker => setMarkerEditor({ marker, point: { x: marker.pixelX, y: marker.pixelY } })}
-              onHoverClaim={setActiveClaimId}
+              key={`${data.scope}:${data.activeMap.id}:${data.activeMap.tileRevision}`}
+              mapId={data.activeMap.id}
+              scope={data.scope}
+              revision={data.listRevision}
+              canEditProject={project => (canCreateProject || canManage) && mayEditProject(profile?.role, user?.id, project)}
+              onFocusProject={project => void viewProject(project)}
+              onEditProject={project => { if (!busy) void editProject(project); }}
+              onHoverProject={setActiveProjectId}
             />
             <div className="map-canvas-column">
-              {data.snapshotError ? (
-                <div className="notice error map-snapshot-notice" role="alert">
-                  <span>{t(getErrorTranslationKey(data.snapshotError))}</span>
-                  <button type="button" className="button secondary small" onClick={() => void data.refreshSnapshot()}>{t("app.retry")}</button>
-                </div>
-              ) : null}
               <div className="map-corner-label"><span>{data.activeMap.shortLabel || data.activeMap.name.slice(0, 2)}</span><strong>{data.activeMap.name}</strong></div>
               <MapViewport
+                key={`${data.scope}:${data.activeMap.id}:${data.activeMap.tileRevision}`}
                 ref={viewportRef}
                 map={data.activeMap}
-                claims={data.snapshot.claims}
-                markers={data.snapshot.markers}
+                projects={data.snapshot.projects}
                 selection={selection}
                 tool={tool}
                 subtract={subtract}
-                activeClaimId={activeClaim?.id ?? null}
-                editableClaimId={editingClaim?.id ?? null}
-                markerPlacement={markerPlacement}
-                editable={canClaim || canManage}
-                onSelectionChange={setSelection}
-                onClaimHover={setActiveClaimId}
-                onClaimSelect={claim => setActiveClaimId(claim.id)}
-                onMarkerSelect={marker => canManage && setMarkerEditor({ marker, point: { x: marker.pixelX, y: marker.pixelY } })}
-                onMarkerPlace={point => { setMarkerPlacement(false); setMarkerEditor({ point }); }}
+                activeProjectId={activeProject?.id ?? null}
+                editableProjectId={editingProject?.id ?? null}
+                editable={(canCreateProject || canManage) && Boolean(data.loadedBounds)}
+                loadedBounds={data.loadedBounds}
+                onViewportChange={data.setViewport}
+                onSelectionChange={next => {
+                  const previousKeys = new Set(selection.map(cell => `${cell.column}:${cell.row}`));
+                  const nextKeys = new Set(next.map(cell => `${cell.column}:${cell.row}`));
+                  const changes = [...next.filter(cell => !previousKeys.has(`${cell.column}:${cell.row}`)),
+                    ...selection.filter(cell => !nextKeys.has(`${cell.column}:${cell.row}`))];
+                  if (!changes.every(cell => containsCell(data.loadedBounds, cell))) return;
+                  changes.forEach(cell => validatedChanges.current.add(`${cell.column}:${cell.row}`));
+                  setSelection(next);
+                }}
+                onProjectHover={setActiveProjectId}
+                onProjectSelect={project => { if (!busy) void viewProject(project); }}
               />
               <MapToolbar
                 tool={tool}
                 subtract={subtract}
                 count={selection.length}
-                canClaim={canClaim}
+                canCreateProject={canCreateProject}
                 canManage={canManage}
-                markerPlacement={markerPlacement}
-                editingClaim={Boolean(editingClaim)}
+                editingProject={Boolean(editingProject)}
                 onTool={setTool}
                 onSubtract={() => setSubtract(value => !value)}
-                onClear={() => { setSelection([]); setEditingClaim(null); }}
+                onClear={() => { setSelection([]); setEditingProject(null); validatedChanges.current.clear(); }}
                 onReset={() => viewportRef.current?.reset()}
-                onCreateClaim={() => setClaimEditor(editingClaim ?? "new")}
-                onMarkerPlacement={() => setMarkerPlacement(value => !value)}
+                onCreateProject={() => setProjectEditor(editingProject ?? "new")}
                 onManage={() => setManagerOpen(true)}
               />
               {!online ? <div className="map-offline-notice">{t("map.offline")}</div> : null}
@@ -312,20 +352,28 @@ export function AtlasPage() {
         )}
       </section>
 
-      {claimEditor && data.activeMap ? <ClaimEditor
-        key={claimEditor === "new" ? `new-${selection.map(cell => `${cell.column}:${cell.row}`).join(",")}` : claimEditor.id}
+      {projectDetail ? <Dialog title={t("map.project.details")} onClose={() => { setProjectDetail(null); detailRequest.current += 1; }} className="map-project-detail">
+        <header className="map-project-detail-header">
+          <MinecraftAvatar username={projectDetail.minecraftUsername} size={64} alt="" />
+          <div><h3>{projectDetail.projectName}</h3><p>{t("map.project.builder")} · {projectDetail.minecraftUsername}</p></div>
+        </header>
+        <div className="map-project-detail-meta"><span>{t("map.claim.cells", { count: projectDetail.cellCount ?? projectDetail.cells.length })}</span><span>{t("map.project.updated")} · {new Date(projectDetail.updatedAt).toLocaleDateString(language)}</span></div>
+        {projectDetail.description ? <div className="map-project-description">{projectDetail.description}</div> : null}
+        {(canCreateProject || canManage) && mayEditProject(profile?.role, user?.id, projectDetail) ? <div className="button-row end"><Button className="secondary" disabled={busy} onClick={() => void editProject(projectDetail)}><Pencil size={16} />{t("map.project.edit")}</Button></div> : null}
+      </Dialog> : null}
+      {projectEditor && data.activeMap ? <ProjectEditor
+        key={projectEditor === "new" ? `new-${selection.map(cell => `${cell.column}:${cell.row}`).join(",")}` : projectEditor.id}
         mapId={data.activeMap.id}
-        initial={claimEditor === "new" ? undefined : claimEditor}
+        initial={projectEditor === "new" ? undefined : projectEditor}
         cells={selection}
         owners={owners}
         currentUserId={user?.id}
         canManage={canManage}
         busy={busy}
-        onClose={() => setClaimEditor(null)}
-        onSave={draft => void persistClaim(draft)}
-        onDelete={claim => void removeClaim(claim)}
+        onClose={() => setProjectEditor(null)}
+        onSave={draft => void persistProject(draft)}
+        onDelete={project => void removeProject(project)}
       /> : null}
-      {markerEditor && data.activeMap ? <MarkerEditor mapId={data.activeMap.id} point={markerEditor.point} initial={markerEditor.marker} busy={busy} onClose={() => setMarkerEditor(null)} onSave={draft => void persistMarker(draft)} onDelete={marker => void removeMarker(marker)} /> : null}
       {managerOpen ? <MapManager maps={data.maps} activeMap={data.activeMap} onClose={() => setManagerOpen(false)} onChanged={data.refreshMaps} onNotice={showNotice} /> : null}
       {pendingLeave ? (
         <ConfirmDialog

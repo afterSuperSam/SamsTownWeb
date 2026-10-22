@@ -8,6 +8,8 @@ export function MinecraftAvatar({ username, size = 48, ...props }: {
 } & Omit<ImgHTMLAttributes<HTMLImageElement>, "src">) {
   return <img
     {...props}
+    width={size}
+    height={size}
     src={`https://mc-heads.net/avatar/${encodeURIComponent(username)}/${size}`}
     onError={event => {
       event.currentTarget.onerror = null;

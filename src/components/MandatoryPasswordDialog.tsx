@@ -1,3 +1,5 @@
+import { Notice } from "./RetryNotice";
+import { Button } from "./Button";
 import { KeyRound } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { getErrorTranslationKey } from "../i18n/errors";
@@ -83,10 +85,10 @@ export function MandatoryPasswordDialog() {
             required
           />
         </label>
-        {errorKey ? <div className="notice error" role="alert">{t(errorKey)}</div> : null}
-        <button type="submit" className="button primary" disabled={busy}>
+        {errorKey ? <Notice>{t(errorKey)}</Notice> : null}
+        <Button type="submit" className="primary" disabled={busy}>
           {t(busy ? "auth.passwordChange.saving" : "auth.passwordChange.submit")}
-        </button>
+        </Button>
       </form>
     </Dialog>
   );

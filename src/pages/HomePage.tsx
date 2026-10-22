@@ -1,45 +1,35 @@
 import { ArrowRight, ChevronDown, ExternalLink } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Link } from "react-router";
+import { Button } from "../components/Button";
 import { CopyContactButton } from "../components/CopyContactButton";
+import { Notice } from "../components/RetryNotice";
 import { DayCounter } from "../components/DayCounter";
+import { SectionNavigation } from "../components/SectionNavigation";
 import { DriftWall } from "../components/DriftWall";
 import { FeaturedMembers } from "../components/MemberDirectory";
 import { HeroTransition } from "../components/HeroTransition";
 import { MediaFigure } from "../components/MediaFigure";
-import { PageLoading } from "../components/TerrainLoading";
+import { useInitialHomeLoading, PageLoading } from "../components/TerrainLoading";
 import { preloadTownImage, TownImage as TownImageAsset } from "../components/TownImage";
-import { defaultAnnouncements, defaultFaqs, defaultHistory, defaultImages, defaultMembers } from "../domain/defaults";
+import { defaultFaqs, defaultImages, defaultMembers } from "../domain/defaults";
 import { selectTownGalleryMedia } from "../domain/townGallery";
+import { visualConfig } from "../domain/visualConfig";
 import type {
+  BlogPost,
   FaqItem,
-  HistoryEvent,
   Language,
-  SiteContent,
-  TownAnnouncement,
-  TownImage,
-  TownMember
+  TownImage
 } from "../domain/types";
 import { useScrollReveal } from "../hooks/useScrollReveal";
 import { getErrorTranslationKey } from "../i18n/errors";
 import { useI18n } from "../i18n/I18nContext";
-import { localizedText } from "../i18n/localizedText";
 import { safeExternalUrl } from "../lib/externalUrl";
 import { getTownAgeDays } from "../lib/townAge";
-import { getSiteBundle } from "../services/siteRepository";
-
-interface SiteState {
-  content: SiteContent;
-  members: TownMember[];
-  history: HistoryEvent[];
-  images: TownImage[];
-  faqs: FaqItem[];
-  announcements: TownAnnouncement[];
-}
+import { getBlogPosts, getSiteBundle, type SiteBundle } from "../services/siteRepository";
 
 function localizedImageText(image: TownImage, field: "caption" | "alt", language: Language) {
-  const suffix = field === "caption" ? "caption" : "alt";
-  const value = language === "zh-CN" ? image[`${suffix}Zh`] : image[`${suffix}En`];
+  const value = language === "zh-CN" ? image[`${field}Zh`] : image[`${field}En`];
   return value || image.captionZh || image.altZh;
 }
 
@@ -86,18 +76,16 @@ function StaggeredText({ as: Tag, className = "", language, startDelay, step, te
 // Public homepage -----------------------------------------------------------
 export function HomePage() {
   const { language, content: sharedContent, t } = useI18n();
-  const [data, setData] = useState<SiteState>({
+  const reportLoading = useInitialHomeLoading();
+  const [data, setData] = useState<SiteBundle>({
     content: sharedContent,
     members: defaultMembers,
-    history: defaultHistory,
     images: defaultImages,
-    faqs: defaultFaqs,
-    announcements: defaultAnnouncements
+    faqs: defaultFaqs
   });
   const [siteReady, setSiteReady] = useState(false);
   const [loadError, setLoadError] = useState<ReturnType<typeof getErrorTranslationKey> | null>(null);
   const siteRevision = useRef(0);
-  const quickNavVisible = useQuickNavVisibility();
   useScrollReveal(siteReady);
 
   const loadSiteData = useCallback(async () => {
@@ -115,9 +103,12 @@ export function HomePage() {
     } catch (error) {
       if (revision === siteRevision.current) setLoadError(getErrorTranslationKey(error));
     } finally {
-      if (revision === siteRevision.current) setSiteReady(true);
+      if (revision === siteRevision.current) {
+        reportLoading();
+        setSiteReady(true);
+      }
     }
-  }, []);
+  }, [reportLoading]);
 
   useEffect(() => {
     void loadSiteData();
@@ -126,11 +117,8 @@ export function HomePage() {
 
   const imagesByArea = useMemo(() => {
     const visibleImages = data.images.filter(image => image.visible);
-    const selectSingle = (area: TownImage["area"], imagesOnly = true) => {
-      const candidates = data.images.filter(image => image.area === area && (!imagesOnly || image.mediaType === "image"));
-      if (!candidates.length) return null;
-      return candidates.find(image => image.visible) ?? null;
-    };
+    const selectSingle = (area: TownImage["area"], imagesOnly = true) => visibleImages
+      .find(image => image.area === area && (!imagesOnly || image.mediaType === "image")) ?? null;
     const story = selectSingle("story", false);
     const storySupporting = visibleImages
       .filter(image => image.area === "story" && image.mediaType === "image" && image.id !== story?.id)
@@ -145,10 +133,7 @@ export function HomePage() {
     };
   }, [data.images]);
 
-  const visibleAnnouncements = data.announcements.filter(item => item.visible);
-  const imageById = new Map(data.images.map(image => [image.id, image]));
   const kookUrl = safeExternalUrl(data.content.settings.kookUrl, { httpsOnly: true });
-  const surveyUrl = safeExternalUrl(data.content.settings.surveyUrl, { httpsOnly: true });
 
   if (!siteReady) {
     return <PageLoading label={t("app.loading.terrain")} />;
@@ -156,33 +141,33 @@ export function HomePage() {
 
   return (
     <main className="home-page ambient-page">
-      <HomeQuickNav visible={quickNavVisible} label={t("app.nav.home")} sections={[
+      <SectionNavigation sections={[
         { id: "home", label: t("home.hero.title") },
         { id: "story", label: t("home.story.title") },
         { id: "gallery", label: t("home.gallery.title") },
         { id: "members", label: t("home.featured.title") },
-        { id: "history-preview", label: t("home.history.title") },
         { id: "join", label: t("home.join.title") },
         { id: "faq", label: t("home.faq.title") },
-        ...(visibleAnnouncements.length ? [{ id: "announcements", label: t("home.announcements.title") }] : []),
-        { id: "survey", label: t("home.survey.title") }
+        { id: "announcements", label: t("home.announcements.title") }
       ]} />
       {loadError ? (
         <div className="site-load-notice" role="status">
           {t(loadError)}
-          <button type="button" onClick={() => void loadSiteData()}>{t("app.retry")}</button>
+          <Button type="button" className="secondary small" onClick={() => void loadSiteData()}>{t("app.retry")}</Button>
         </div>
       ) : null}
 
       <section className="hero page-hero" id="home">
         {imagesByArea.hero ? (
-          <TownImageAsset
-            className="page-hero-image"
-            source={imagesByArea.hero.sourceUrl}
-            alt={localizedImageText(imagesByArea.hero, "alt", language)}
-            loading="eager"
-            fetchPriority="high"
-          />
+          <div className="page-hero-media">
+            <TownImageAsset
+              className="page-hero-image"
+              source={imagesByArea.hero.sourceUrl}
+              alt={localizedImageText(imagesByArea.hero, "alt", language)}
+              loading="eager"
+              fetchPriority="high"
+            />
+          </div>
         ) : null}
         <div className="page-hero-shade" />
         <div className="hero-copy hero-copy-sequence">
@@ -190,7 +175,7 @@ export function HomePage() {
           <StaggeredText as="h1" language={language} startDelay={260} step={54} text={t("home.hero.title")} />
           <StaggeredText as="p" language={language} startDelay={540} step={22} text={t("home.hero.body")} />
           <div className="button-row">
-            <a className="button primary" href="#join">{t("home.hero.join")}</a>
+            <a className="button" href="#join">{t("home.hero.join")}</a>
             <Link className="button" to="/history">{t("app.nav.history")}</Link>
           </div>
         </div>
@@ -268,34 +253,13 @@ export function HomePage() {
         <Link className="text-action featured-archive-link" to="/history#members">{t("home.featured.archive")} <ArrowRight size={17} /></Link>
       </section>
 
-      <section className="content-section history" id="history-preview" data-reveal data-reveal-group>
-        <SectionHeading title={t("home.history.title")} description={t("home.history.body")} compact />
-        <div
-          className="timeline-viewport"
-          tabIndex={0}
-          aria-label={t("home.history.title")}
-          onKeyDown={event => {
-            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-            event.preventDefault();
-            event.currentTarget.scrollBy({ left: event.key === "ArrowLeft" ? -320 : 320, behavior: "smooth" });
-          }}
-        >
-          <div className="timeline" data-reveal-group>
-            {data.history.filter(event => event.showOnHome).map(event => (
-              <article key={event.id}>
-                <time>{event.date}</time>
-                <h3>{localizedText(event.titleZh, event.titleEn, language)}</h3>
-                <p>{localizedText(event.bodyZh, event.bodyEn, language)}</p>
-              </article>
-            ))}
+      <section className="join" id="join" data-reveal>
+        <div className="join-media media-edge-both">
+          <div className="media-edge-inner">
+            {imagesByArea.join ? <TownImageAsset source={imagesByArea.join.sourceUrl} alt={localizedImageText(imagesByArea.join, "alt", language)} loading="lazy" /> : null}
+            <div className="join-shade" />
           </div>
         </div>
-        <Link className="text-action history-archive-link" to="/history">{t("home.history.more")} <ArrowRight size={17} /></Link>
-      </section>
-
-      <section className="join" id="join" data-reveal>
-        {imagesByArea.join ? <TownImageAsset source={imagesByArea.join.sourceUrl} alt={localizedImageText(imagesByArea.join, "alt", language)} loading="lazy" /> : null}
-        <div className="join-shade" />
         <div className="join-copy" data-reveal-group>
           <h2>{t("home.join.title")}</h2>
           <p>{t("home.join.body")}</p>
@@ -303,12 +267,6 @@ export function HomePage() {
             <CopyContactButton
               value={data.content.settings.qqGroup}
               label={t("home.join.qqGroup", { value: data.content.settings.qqGroup })}
-              copiedLabel={t("home.join.copied")}
-              failedLabel={t("home.join.copyFailed")}
-            />
-            <CopyContactButton
-              value={data.content.settings.mayorQq}
-              label={t("home.join.mayorQq", { value: data.content.settings.mayorQq })}
               copiedLabel={t("home.join.copied")}
               failedLabel={t("home.join.copyFailed")}
             />
@@ -326,124 +284,52 @@ export function HomePage() {
         <FaqList items={data.faqs.filter(item => item.visible)} language={language} />
       </section>
 
-      {visibleAnnouncements.length ? (
-        <section className="content-section announcements" id="announcements" data-reveal data-reveal-group>
-          <SectionHeading title={t("home.announcements.title")} description={t("home.announcements.body")} compact />
-          <div className="announcement-list" data-reveal-group>
-            {visibleAnnouncements.map(item => {
-              const selectedImage = item.imageId ? imageById.get(item.imageId) : undefined;
-              const image = selectedImage?.visible ? selectedImage : undefined;
-              const title = language === "zh-CN" ? item.titleZh : item.titleEn || item.titleZh;
-              const subtitle = language === "zh-CN" ? item.subtitleZh : item.subtitleEn || item.subtitleZh;
-              const body = language === "zh-CN" ? item.bodyZh : item.bodyEn || item.bodyZh;
-              return (
-                <article className={image ? "has-media" : ""} key={item.id}>
-                  <div>
-                    <span>{t(`home.announcements.${item.kind}`)}</span>
-                    <h3>{title}</h3>
-                    {subtitle ? <strong>{subtitle}</strong> : null}
-                    {body ? <p>{body}</p> : null}
-                  </div>
-                  {image ? (
-                    <MediaFigure
-                      media={image}
-                      alt={localizedImageText(image, "alt", language)}
-                      caption={localizedImageText(image, "caption", language)}
-                      imageProps={{ loading: "lazy" }}
-                    />
-                  ) : null}
-                </article>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
-
-      <section className="content-section survey" id="survey" data-reveal data-reveal-group>
-        <SectionHeading title={t("home.survey.title")} description={t("home.survey.body")} compact />
-        {surveyUrl ? (
-          <>
-            <SurveyEmbed url={surveyUrl} title={t("home.survey.title")} />
-            <p className="survey-fallback">
-              {t("home.survey.fallback")} <a href={surveyUrl} target="_blank" rel="noreferrer">{t("home.survey.open")}</a>
-            </p>
-          </>
-        ) : null}
-      </section>
+      <BlogNotices />
 
     </main>
   );
 }
 
-// The third-party survey autofocuses after its own delayed boot and can drag a
-// freshly loaded homepage to the bottom. Mount it only when the visitor reaches
-// the survey section, preserving the embed without destabilising the first view.
-function SurveyEmbed({ url, title }: { url: string; title: string }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [active, setActive] = useState(false);
+// 外部文章独立渐入，失败只影响告知区，不阻塞首页和其他内容。
+function BlogNotices() {
+  const { language, t } = useI18n();
+  const [posts, setPosts] = useState<BlogPost[]>([]);
+  const [pending, setPending] = useState(true);
+  const [failed, setFailed] = useState(false);
+  const [revision, setRevision] = useState(0);
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container || active) return;
-    if (typeof IntersectionObserver === "undefined") {
-      setActive(true);
-      return;
-    }
-    const observer = new IntersectionObserver(entries => {
-      if (!entries.some(entry => entry.isIntersecting)) return;
-      setActive(true);
-      observer.disconnect();
-    }, { rootMargin: "320px 0px" });
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, [active]);
+    const controller = new AbortController();
+    setPending(true);
+    setFailed(false);
+    void getBlogPosts(controller.signal).then(result => {
+      if (!controller.signal.aborted) setPosts(result);
+    }).catch(() => {
+      if (!controller.signal.aborted) setFailed(true);
+    }).finally(() => {
+      if (!controller.signal.aborted) setPending(false);
+    });
+    return () => controller.abort();
+  }, [revision]);
 
-  return <div className="survey-frame" ref={containerRef}>
-    {active ? <iframe
-      title={title}
-      src={url}
-      sandbox="allow-same-origin allow-scripts allow-modals allow-downloads allow-forms allow-popups"
-      allowFullScreen
-      loading="lazy"
-    /> : null}
-  </div>;
-}
-
-function HomeQuickNav({ label, sections, visible }: {
-  label: string;
-  sections: Array<{ id: string; label: string }>;
-  visible: boolean;
-}) {
-  return <nav className={`home-quick-nav ${visible ? "visible" : ""}`} aria-label={label} aria-hidden={!visible} inert={!visible}>
-    {sections.map(section => <a key={section.id} href={`#${section.id}`} aria-label={section.label}>
-      <span>{section.label}</span><i />
-    </a>)}
-  </nav>;
-}
-
-function useQuickNavVisibility() {
-  const [visible, setVisible] = useState(false);
-  useEffect(() => {
-    let frame = 0;
-    const update = () => {
-      if (frame) return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        const threshold = Math.min(window.innerHeight * .55, 520);
-        const next = window.scrollY > threshold;
-        setVisible(current => current === next ? current : next);
-      });
-    };
-    update();
-    window.addEventListener("scroll", update, { passive: true });
-    window.addEventListener("resize", update, { passive: true });
-    return () => {
-      cancelAnimationFrame(frame);
-      window.removeEventListener("scroll", update);
-      window.removeEventListener("resize", update);
-    };
-  }, []);
-  return visible;
+  return <section className="content-section announcements" id="announcements" aria-label="SamsBlog" data-reveal data-reveal-group>
+    {failed ? <Notice>{t("error.blogFeed")} <Button className="small" onClick={() => setRevision(value => value + 1)}>{t("app.retry")}</Button></Notice> : null}
+    <div className="blog-posts" aria-busy={pending} data-reveal-group>
+      {pending && !posts.length ? <p className="muted" role="status">{t("home.announcements.loading")}</p> : null}
+      {!pending && !failed && !posts.length ? <p className="muted">{t("home.announcements.empty")}</p> : null}
+      {posts.slice(0, visualConfig.homeBlogPostLimit).map(post => <article className={post.coverUrl ? "has-media" : ""} key={post.url}>
+        <div>
+          <span>SamsBlog · <time dateTime={post.publishedAt}>{new Date(post.publishedAt).toLocaleDateString(language)}</time></span>
+          <h3><a href={post.url} target="_blank" rel="noreferrer">{post.title}</a></h3>
+          <p>{post.description}</p>
+          <a className="text-action" href={post.url} target="_blank" rel="noreferrer">{t("home.announcements.read")} <ArrowRight size={17} /></a>
+        </div>
+        {post.coverUrl ? <a className="blog-post-cover" href={post.url} target="_blank" rel="noreferrer" aria-label={post.title}>
+          <TownImageAsset source={post.coverUrl} alt="" loading="lazy" />
+        </a> : null}
+      </article>)}
+    </div>
+  </section>;
 }
 
 function SectionHeading({ title, description, compact = false }: {
@@ -486,18 +372,20 @@ function MemberShowcaseVideo() {
   }, []);
 
   return (
-    <div className="member-showcase-media" aria-hidden="true">
-      <video
-        ref={videoRef}
-        muted
-        loop
-        playsInline
-        preload="metadata"
-        poster="/media/member-machine-poster.webp"
-        tabIndex={-1}
-      >
-        <source src="/media/member-machine-loop.mp4" type="video/mp4" />
-      </video>
+    <div className="member-showcase-media media-edge-both" aria-hidden="true">
+      <div className="media-edge-inner">
+        <video
+          ref={videoRef}
+          muted
+          loop
+          playsInline
+          preload="metadata"
+          poster="/media/member-machine-poster.webp"
+          tabIndex={-1}
+        >
+          <source src="/media/member-machine-loop.mp4" type="video/mp4" />
+        </video>
+      </div>
     </div>
   );
 }

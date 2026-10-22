@@ -9,6 +9,8 @@ import {
   type PointerEvent as ReactPointerEvent
 } from "react";
 import { TownImage } from "./TownImage";
+import { safeExternalUrl } from "../lib/externalUrl";
+import { visualConfig } from "../domain/visualConfig";
 import "../styles/drift-wall.css";
 
 export interface DriftWallItem {
@@ -30,6 +32,16 @@ interface DriftWallProps {
 }
 
 const DEFAULT_HEIGHT = 680;
+const documentSeed = globalThis.crypto.getRandomValues(new Uint32Array(1))[0];
+
+// 文档级种子只在刷新时改变；SPA 返回首页与语言切换保留同一套排布。
+function documentRandom(key: string) {
+  let hash = documentSeed ^ 2166136261;
+  for (const character of key) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
+  hash = Math.imul(hash ^ (hash >>> 16), 2246822507);
+  hash = Math.imul(hash ^ (hash >>> 13), 3266489909);
+  return ((hash ^ (hash >>> 16)) >>> 0) / 4294967296;
+}
 
 function responsiveColumnCount(width: number, itemCount: number) {
   const preferred = width < 640 ? 2 : 3;
@@ -37,7 +49,7 @@ function responsiveColumnCount(width: number, itemCount: number) {
 }
 
 function columnFactor(index: number, variance: number) {
-  const pseudo = ((index * .6180339887 + .35) % 1) * 2 - 1;
+  const pseudo = documentRandom(`velocity-${index}`) * 2 - 1;
   return 1 + variance * pseudo;
 }
 
@@ -45,11 +57,7 @@ function reducedMotionQuery() {
   return window.matchMedia("(prefers-reduced-motion: reduce)");
 }
 
-export function measureCycleLayoutHeight(element: HTMLElement | null) {
-  return element?.offsetHeight ?? 0;
-}
-
-export function calculateCycleCopies(cycleHeight: number, containerHeight: number) {
+function calculateCycleCopies(cycleHeight: number, containerHeight: number) {
   if (cycleHeight <= 0) return 4;
   return Math.max(4, Math.ceil((containerHeight * 4.5) / cycleHeight));
 }
@@ -57,9 +65,9 @@ export function calculateCycleCopies(cycleHeight: number, containerHeight: numbe
 export function DriftWall({
   items,
   label,
-  speed = 10,
-  variance = .22,
-  parallax = .75,
+  speed = visualConfig.driftWall.speed,
+  variance = visualConfig.driftWall.variance,
+  parallax = visualConfig.driftWall.parallax,
   pauseOnHover = false
 }: DriftWallProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -75,6 +83,7 @@ export function DriftWall({
   const lastTimestampRef = useRef<number | null>(null);
   const [reducedMotion, setReducedMotion] = useState(() => reducedMotionQuery().matches);
   const [activeTileId, setActiveTileId] = useState<string | null>(null);
+  const [focusWithin, setFocusWithin] = useState(false);
   const [containerMetrics, setContainerMetrics] = useState({
     width: 1200,
     height: DEFAULT_HEIGHT,
@@ -84,7 +93,8 @@ export function DriftWall({
 
   const columnItems = useMemo(() => {
     const columns = Array.from({ length: containerMetrics.columns }, () => [] as DriftWallItem[]);
-    items.forEach((item, index) => columns[index % columns.length].push(item));
+    const shuffled = [...items].sort((first, second) => documentRandom(`order-${first.id}`) - documentRandom(`order-${second.id}`) || first.id.localeCompare(second.id));
+    shuffled.forEach((item, index) => columns[index % columns.length].push(item));
     return columns;
   }, [containerMetrics.columns, items]);
 
@@ -121,7 +131,7 @@ export function DriftWall({
   useLayoutEffect(() => {
     if (typeof ResizeObserver === "undefined") return;
     const updateHeights = () => {
-      const next = columnItems.map((_, index) => measureCycleLayoutHeight(cycleRefs.current[index]));
+      const next = columnItems.map((_, index) => cycleRefs.current[index]?.offsetHeight ?? 0);
       setCycleHeights(current => current.length === next.length && current.every((height, index) => height === next[index]) ? current : next);
     };
     const observer = new ResizeObserver(updateHeights);
@@ -136,15 +146,26 @@ export function DriftWall({
     planeRef.current?.style.setProperty("transform", `translate(-50%, -50%) scale(1.12) rotateX(${8 + y}deg) rotateY(${-8 + x}deg) translateZ(-100px)`);
   }, []);
 
+  // 键盘焦点浏览使用静态布局；指针聚焦克隆时保留正在交互的照片。
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (focusWithin) {
+      (document.activeElement as HTMLElement | null)?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    } else if (container) {
+      container.scrollTop = 0;
+    }
+  }, [focusWithin]);
+
   useEffect(() => {
     offsetsRef.current = columnItems.map((_, index) => {
       const height = cycleHeights[index] || 1;
-      return height * ((index * .31) % 1);
+      return height * documentRandom(`start-${index}`);
     });
     velocitiesRef.current = columnItems.map(() => 0);
   }, [columnItems, cycleHeights]);
 
   useEffect(() => {
+    if (focusWithin) return;
     if (reducedMotion) {
       applyPlaneTransform(0, 0);
       trackRefs.current.forEach(track => track?.style.setProperty("transform", "translate3d(0, 0, 0)"));
@@ -185,16 +206,16 @@ export function DriftWall({
       cancelAnimationFrame(frame);
       lastTimestampRef.current = null;
     };
-  }, [applyPlaneTransform, baseVelocities, columnItems.length, cycleHeights, parallax, pauseOnHover, reducedMotion]);
+  }, [applyPlaneTransform, baseVelocities, columnItems.length, cycleHeights, focusWithin, parallax, pauseOnHover, reducedMotion]);
 
   const handlePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (reducedMotion) return;
+    if (reducedMotion || focusWithin) return;
     const bounds = event.currentTarget.getBoundingClientRect();
     pointerRef.current = {
       x: (event.clientX - bounds.left) / bounds.width - .5,
       y: (event.clientY - bounds.top) / bounds.height - .5
     };
-  }, [reducedMotion]);
+  }, [focusWithin, reducedMotion]);
 
   const handleWallLeave = useCallback(() => {
     wallHoveredRef.current = false;
@@ -205,6 +226,11 @@ export function DriftWall({
   const renderTile = (item: DriftWallItem, columnIndex: number, copyIndex: number) => {
     const duplicate = copyIndex > 0;
     const tileId = `${item.id}-${columnIndex}-${copyIndex}`;
+    const maximumOffset = Math.min(visualConfig.driftWall.tileOffsetMaximum, columnGap * .18);
+    const tileStyle = {
+      "--dw-tile-inset": `${documentRandom(`inset-${item.id}`) * visualConfig.driftWall.tileInsetRatio * 100}%`,
+      "--dw-tile-offset": `${(documentRandom(`offset-${item.id}`) * 2 - 1) * maximumOffset}px`
+    } as CSSProperties;
     const enter = () => { hoveredColumnRef.current = columnIndex; };
     const leave = () => {
       if (hoveredColumnRef.current === columnIndex) hoveredColumnRef.current = -1;
@@ -215,10 +241,12 @@ export function DriftWall({
       {item.title ? <span className="drift-wall__caption">{item.title}</span> : null}
     </span>;
 
-    if (item.href) {
+    const safeHref = item.href ? safeExternalUrl(item.href, { httpsOnly: true }) : null;
+    if (safeHref) {
       return <a
         className={`drift-wall__tile drift-wall__tile--${item.layout}`}
-        href={item.href}
+        style={tileStyle}
+        href={safeHref}
         target="_blank"
         rel="noreferrer"
         tabIndex={duplicate ? -1 : undefined}
@@ -231,29 +259,29 @@ export function DriftWall({
     }
 
     const active = activeTileId === tileId;
-    return <figure
+    return <figure key={tileId} className="drift-wall__figure"><button
+      type="button"
       className={`drift-wall__tile drift-wall__tile--${item.layout}${active ? " is-active" : ""}`}
+      style={tileStyle}
       tabIndex={duplicate ? -1 : 0}
-      role="button"
       aria-label={item.title || item.alt}
       aria-pressed={active}
       onPointerEnter={enter}
       onPointerLeave={leave}
       onFocus={enter}
       onBlur={leave}
-      onClick={() => setActiveTileId(current => current === tileId ? null : tileId)}
-      key={tileId}
-    >{content}</figure>;
+      onClick={duplicate ? undefined : () => setActiveTileId(current => current === tileId ? null : tileId)}
+    >{content}</button></figure>;
   };
 
   const columnGap = containerMetrics.width < 640 ? 16 : containerMetrics.width < 980 ? 22 : 26;
   const safeWidthRatio = containerMetrics.columns === 3 ? .88 : .92;
-  const tileWidth = Math.max(144, Math.min(360,
+  const tileWidth = Math.max(visualConfig.driftWall.tileWidthMinimum, Math.min(visualConfig.driftWall.tileWidthMaximum,
     (containerMetrics.width * safeWidthRatio - columnGap * (containerMetrics.columns - 1)) / containerMetrics.columns
   ));
 
   return <div
-    className="drift-wall"
+    className={`drift-wall${focusWithin ? " is-focused" : ""}`}
     ref={containerRef}
     style={{
       "--dw-tile-width": `${tileWidth}px`,
@@ -261,6 +289,13 @@ export function DriftWall({
     } as CSSProperties}
     role="group"
     aria-label={label}
+    onFocusCapture={event => {
+      const target = event.target as HTMLElement;
+      if (target.matches(":focus-visible") && !target.closest('[aria-hidden="true"]')) setFocusWithin(true);
+    }}
+    onBlurCapture={event => {
+      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocusWithin(false);
+    }}
     onPointerMove={handlePointerMove}
     onPointerEnter={() => { wallHoveredRef.current = true; }}
     onPointerLeave={handleWallLeave}
@@ -268,8 +303,9 @@ export function DriftWall({
     <div className="drift-wall__plane" ref={planeRef}>
       {columnItems.map((column, columnIndex) => {
         const cycleHeight = cycleHeights[columnIndex] || 0;
-        const copies = calculateCycleCopies(cycleHeight, containerMetrics.height);
-        return <div className="drift-wall__column" key={`column-${columnIndex}`}>
+        const copies = reducedMotion ? 1 : calculateCycleCopies(cycleHeight, containerMetrics.height);
+        const rowGap = visualConfig.driftWall.rowGapMinimum + documentRandom(`gap-${columnIndex}`) * (visualConfig.driftWall.rowGapMaximum - visualConfig.driftWall.rowGapMinimum);
+        return <div className="drift-wall__column" key={`column-${columnIndex}`} style={{ "--dw-row-gap": `${rowGap}px` } as CSSProperties}>
           <div className="drift-wall__track" ref={element => { trackRefs.current[columnIndex] = element; }}>
             {Array.from({ length: copies }, (_, copyIndex) => <div
               className="drift-wall__cycle"

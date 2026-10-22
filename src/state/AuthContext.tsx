@@ -42,7 +42,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const blocksRoute = settledUserId.current !== session.user.id || !hasSettledProfile.current;
     if (mounted.current && blocksRoute) setLoading(true);
     try {
-      const nextProfile = await getCurrentProfile();
+      const nextProfile = await getCurrentProfile(session.user.id);
       if (!mounted.current || revision !== syncRevision.current) return null;
       settledUserId.current = session.user.id;
       hasSettledProfile.current = Boolean(nextProfile);
@@ -63,20 +63,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const refreshProfile = useCallback(async () => {
-    const revision = syncRevision.current;
-    const nextProfile = await getCurrentProfile();
-    if (!mounted.current || revision !== syncRevision.current) return;
-    settledUserId.current = nextProfile?.id ?? null;
-    hasSettledProfile.current = Boolean(nextProfile);
-    setProfile(nextProfile);
-  }, []);
-
   const refreshSession = useCallback(async () => {
     const { data, error } = await supabase.auth.getSession();
     if (error) throw error;
     return synchronizeSession(data.session);
   }, [synchronizeSession]);
+
+  const refreshProfile = useCallback(async () => {
+    await refreshSession();
+  }, [refreshSession]);
 
   useEffect(() => {
     mounted.current = true;
@@ -85,12 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    void refreshSession().catch(() => {
-      if (!mounted.current) return;
-      setProfile(null);
-      setLoading(false);
-    });
-
+    // INITIAL_SESSION 负责首次恢复，避免与主动 getSession 重复查询资料。
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       queueMicrotask(() => {
         void synchronizeSession(session).catch(() => undefined);
@@ -101,7 +91,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       syncRevision.current += 1;
       listener.subscription.unsubscribe();
     };
-  }, [refreshSession, synchronizeSession]);
+  }, [synchronizeSession]);
 
   const value = useMemo(
     () => ({ user, profile, loading, refreshProfile, refreshSession }),

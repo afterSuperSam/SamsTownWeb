@@ -1,41 +1,40 @@
-import { defaultAnnouncements, defaultContent, defaultFaqs, defaultHistory, defaultImages, defaultMembers } from "../domain/defaults";
+import { defaultContent, defaultFaqs, defaultHistory, defaultImages, defaultMembers } from "../domain/defaults";
 import { MAX_HOME_MEMBERS } from "../domain/memberPolicy";
+import { townImageAreas, townImageLayouts } from "../domain/types";
 import type {
   BilibiliVideoMetadata,
+  BlogPost,
   FaqItem,
   HistoryEvent,
-  Resource,
   SiteContent,
-  TownAnnouncement,
   TownImage,
   TownMember
 } from "../domain/types";
 import { translations as defaultTranslations, type TranslationKey, type TranslationOverrides } from "../i18n/translations";
 import { toJson } from "../lib/json";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
-import { authenticatedApiRequest } from "./apiClient";
+import { authenticatedApiRequest, publicApiRequest } from "./apiClient";
 
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const FEATURED_MEMBER_NAMES = new Set(["aresgao", "dogsam", "tabularis", "nani0416", "nanio416"]);
-const missingRelation = (error: { code?: string; message?: string } | null | undefined, relation: string) =>
-  error?.code === "PGRST205" || new RegExp(`${relation}.*schema cache`, "i").test(error?.message ?? "");
-const missingColumn = (error: { code?: string; message?: string } | null | undefined) =>
-  error?.code === "PGRST204" || error?.code === "42703" || /column .* does not exist|schema cache/i.test(error?.message ?? "");
+// 博客公告独立于首页资料加载，避免外部站点拖慢首屏。
+export function getBlogPosts(signal?: AbortSignal): Promise<BlogPost[]> {
+  return publicApiRequest("/api/blog/posts", { signal });
+}
 
 export interface SiteBundle {
   content: SiteContent;
   members: TownMember[];
-  history: HistoryEvent[];
   images: TownImage[];
   faqs: FaqItem[];
-  announcements: TownAnnouncement[];
 }
 
 let cachedSiteContent: SiteContent | null = null;
+let contentRequest: Promise<SiteContent> | null = null;
+let bundleRequest: Promise<SiteBundle> | null = null;
+let initialBundleRequest: Promise<SiteBundle> | null = null;
 
 // Normalize the current content envelope. Obsolete flat copy fields were
 // retired after the translation-based editor became the production schema.
-export function normalizeSiteContent(value: unknown): SiteContent {
+function normalizeSiteContent(value: unknown): SiteContent {
   if (!value || typeof value !== "object") return structuredClone(defaultContent);
   const raw = value as Record<string, unknown>;
   const translations: TranslationOverrides = {};
@@ -52,10 +51,9 @@ export function normalizeSiteContent(value: unknown): SiteContent {
     settings: {
       ...defaultContent.settings,
       ...Object.fromEntries(
-        ["qqGroup", "mayorQq", "kookUrl", "surveyUrl"]
+        ["qqGroup", "mayorQq", "kookUrl"]
           .flatMap(key => typeof settings[key] === "string" ? [[key, settings[key]]] : [])
-      ),
-      ...(typeof raw.qqGroup === "string" ? { qqGroup: raw.qqGroup } : {})
+      )
     } as SiteContent["settings"]
   };
 }
@@ -70,16 +68,12 @@ function isLocalizedText(value: unknown): value is { "zh-CN": string; en: string
   return typeof candidate["zh-CN"] === "string" && typeof candidate.en === "string";
 }
 
-export function resolveRows<Row, Value>(
-  data: Row[] | null | undefined,
-  relationMissing: boolean,
-  fallback: Value[],
-  mapper: (row: Row, index: number) => Value
-): Value[] {
-  return relationMissing ? fallback : (data ?? []).map(mapper);
+// 只合并同时发生的读取，不长期缓存列表，后台更新后仍能获得新数据。
+export function getSiteContent(): Promise<SiteContent> {
+  return contentRequest ??= loadSiteContent().finally(() => { contentRequest = null; });
 }
 
-export async function getSiteContent(): Promise<SiteContent> {
+async function loadSiteContent(): Promise<SiteContent> {
   if (!isSupabaseConfigured) return structuredClone(defaultContent);
   const { data, error } = await supabase.from("site_content").select("content").eq("id", 1).maybeSingle();
   if (error) throw error;
@@ -94,75 +88,67 @@ export async function getTownImages(area?: TownImage["area"]): Promise<TownImage
   let query = supabase.from("town_images").select("*").order("sort_order");
   if (area) query = query.eq("area", area);
   const { data, error } = await query;
-  if (missingRelation(error, "town_images")) {
-    return defaultImages.filter(image => !area || image.area === area);
-  }
   if (error) throw error;
-  return resolveRows(data, false, defaultImages, mapImage);
+  return (data ?? []).map(mapImage);
+}
+
+export async function getTownMembers(): Promise<TownMember[]> {
+  if (!isSupabaseConfigured) return defaultMembers;
+  const { data, error } = await supabase.from("town_members").select("*").order("sort_order");
+  if (error) throw error;
+  return (data ?? []).map(mapMember);
 }
 
 export async function getTownArchive(): Promise<{ members: TownMember[]; history: HistoryEvent[]; images: TownImage[] }> {
-  if (!isSupabaseConfigured) {
-    return { members: defaultMembers, history: defaultHistory, images: defaultImages };
-  }
-  const [membersResult, historyResult, imagesResult] = await Promise.all([
-    supabase.from("town_members").select("*").order("sort_order"),
-    supabase.from("town_history").select("*").order("sort_order"),
-    supabase.from("town_images").select("*").order("sort_order")
-  ]);
-  const imageTableMissing = missingRelation(imagesResult.error, "town_images");
-  if (membersResult.error) throw membersResult.error;
-  if (historyResult.error) throw historyResult.error;
-  if (imagesResult.error && !imageTableMissing) throw imagesResult.error;
-  return {
-    members: (membersResult.data ?? []).map(mapMember),
-    history: (historyResult.data ?? []).map(mapHistory),
-    images: resolveRows(imagesResult.data, imageTableMissing, defaultImages, mapImage)
-  };
+  const [members, history, images] = await Promise.all([getTownMembers(), getTownHistory(), getTownImages()]);
+  return { members, history, images };
 }
 
-// Read public homepage/admin data in parallel. Missing additive tables fall
-// back to checked-in defaults until the latest migration has been applied.
-export async function getSiteBundle(options: { refreshContent?: boolean } = {}): Promise<SiteBundle> {
+// 历史只在档案与后台读取，不再进入首页加载链。
+export async function getTownHistory(): Promise<HistoryEvent[]> {
+  if (!isSupabaseConfigured) return defaultHistory;
+  const { data, error } = await supabase.from("town_history").select("*").order("sort_order");
+  if (error) throw error;
+  return (data ?? []).map(mapHistory);
+}
+
+// 并行加载站点数据；数据库异常直接交给界面错误处理。
+export function preloadSiteBundle(): void {
+  initialBundleRequest ??= loadSiteBundle({});
+  // 首次页面读取同一个结果并展示错误，预加载不单独弹提示。
+  void initialBundleRequest.catch(() => undefined);
+}
+
+export function getSiteBundle(options: { refreshContent?: boolean } = {}): Promise<SiteBundle> {
+  if (options.refreshContent) return loadSiteBundle(options);
+  bundleRequest ??= (initialBundleRequest ?? loadSiteBundle(options))
+    .finally(() => { bundleRequest = null; });
+  initialBundleRequest = null;
+  return bundleRequest;
+}
+
+async function loadSiteBundle(options: { refreshContent?: boolean }): Promise<SiteBundle> {
   if (!isSupabaseConfigured) {
     return {
       content: structuredClone(defaultContent),
       members: defaultMembers,
-      history: defaultHistory,
       images: defaultImages,
-      faqs: defaultFaqs,
-      announcements: defaultAnnouncements
+      faqs: defaultFaqs
     };
   }
-  const contentRequest = cachedSiteContent && !options.refreshContent
-    ? Promise.resolve(null)
-    : supabase.from("site_content").select("content").eq("id", 1).maybeSingle();
-  const [contentResult, membersResult, historyResult, imagesResult, faqResult, announcementsResult] = await Promise.all([
-    contentRequest,
-    supabase.from("town_members").select("*").order("sort_order"),
-    supabase.from("town_history").select("*").order("sort_order"),
-    supabase.from("town_images").select("*").order("sort_order"),
-    supabase.from("faq_items").select("*").order("sort_order"),
-    supabase.from("town_announcements").select("*").order("sort_order")
+  const [content, members, images, faqResult] = await Promise.all([
+    cachedSiteContent && !options.refreshContent ? cachedSiteContent : getSiteContent(),
+    getTownMembers(),
+    getTownImages(),
+    supabase.from("faq_items").select("*").order("sort_order")
   ]);
-  const imageMissing = missingRelation(imagesResult.error, "town_images");
-  const faqMissing = missingRelation(faqResult.error, "faq_items");
-  const announcementsMissing = missingRelation(announcementsResult.error, "town_announcements");
-  const error = contentResult?.error
-    ?? membersResult.error
-    ?? historyResult.error
-    ?? (!imageMissing ? imagesResult.error : null)
-    ?? (!faqMissing ? faqResult.error : null)
-    ?? (!announcementsMissing ? announcementsResult.error : null);
+  const error = faqResult.error;
   if (error) throw error;
-  if (contentResult) cachedSiteContent = normalizeSiteContent(contentResult.data?.content);
   return {
-    content: structuredClone(cachedSiteContent ?? defaultContent),
-    members: (membersResult.data ?? []).map(mapMember),
-    history: (historyResult.data ?? []).map(mapHistory),
-    images: resolveRows(imagesResult.data, imageMissing, defaultImages, mapImage),
-    faqs: resolveRows(faqResult.data, faqMissing, defaultFaqs, mapFaq),
-    announcements: resolveRows(announcementsResult.data, announcementsMissing, defaultAnnouncements, mapAnnouncement)
+    content: structuredClone(content),
+    members,
+    images,
+    faqs: (faqResult.data ?? []).map(mapFaq)
   };
 }
 
@@ -212,32 +198,9 @@ export async function replaceHistory(history: HistoryEvent[]): Promise<void> {
     title_en: event.titleEn,
     body_zh: event.bodyZh,
     body_en: event.bodyEn,
-    image_id: event.imageId,
-    show_on_home: event.showOnHome
+    image_id: event.imageId
   }));
-  let { error } = await supabase.rpc("replace_town_history", { items });
-  if (missingColumn(error)) {
-    ({ error } = await supabase.rpc("replace_town_history", {
-      items: items.map(({ image_id: _imageId, ...item }) => item)
-    }));
-  }
-  if (error) throw error;
-}
-
-export async function replaceAnnouncements(announcements: TownAnnouncement[]): Promise<void> {
-  const { error } = await supabase.rpc("replace_town_announcements", {
-    items: announcements.map(item => ({
-      kind: item.kind,
-      title_zh: item.titleZh.trim(),
-      title_en: item.titleEn.trim(),
-      subtitle_zh: item.subtitleZh.trim(),
-      subtitle_en: item.subtitleEn.trim(),
-      body_zh: item.bodyZh.trim(),
-      body_en: item.bodyEn.trim(),
-      image_id: item.imageId,
-      is_visible: item.visible
-    }))
-  });
+  const { error } = await supabase.rpc("replace_town_history", { items });
   if (error) throw error;
 }
 
@@ -258,7 +221,6 @@ export async function replaceFaqs(faqs: FaqItem[]): Promise<void> {
 export async function saveTownImages(images: TownImage[]): Promise<TownImage[]> {
   const persisted = images.map((image, sortOrder) => ({
     ...image,
-    id: UUID_PATTERN.test(image.id) ? image.id : crypto.randomUUID(),
     sortOrder
   }));
   const rows = persisted.map(image => ({
@@ -279,18 +241,7 @@ export async function saveTownImages(images: TownImage[]): Promise<TownImage[]> 
     is_visible: image.visible,
     sort_order: image.sortOrder
   }));
-  let { error } = await supabase.from("town_images").upsert(rows);
-  if (missingColumn(error)) {
-    ({ error } = await supabase.from("town_images").upsert(rows.map(({
-      is_visible: _visible,
-      media_type: _mediaType,
-      external_id: _externalId,
-      external_url: _externalUrl,
-      creator_name: _creatorName,
-      duration_seconds: _durationSeconds,
-      ...row
-    }) => row)));
-  }
+  const { error } = await supabase.from("town_images").upsert(rows);
   if (error) throw error;
   return persisted;
 }
@@ -320,15 +271,14 @@ export async function uploadTownImage(
     is_visible: true,
     sort_order: 999
   };
-  let result = await supabase.from("town_images").insert(row).select("*").single();
-  if (missingColumn(result.error)) {
-    const { is_visible: _visible, ...legacyRow } = row;
-    result = await supabase.from("town_images").insert(legacyRow).select("*").single();
-  }
+  const result = await supabase.from("town_images").insert(row).select("*").single();
   if (result.error) {
     const cleanup = await supabase.storage.from("site-images").remove([storagePath]);
     if (cleanup.error) {
-      await supabase.rpc("queue_own_storage_cleanup", { p_bucket: "site-images", p_path: storagePath });
+      const queued = await supabase.rpc("queue_own_storage_cleanup", { p_bucket: "site-images", p_path: storagePath });
+      const code = queued.error ? "SITE_IMAGE_CLEANUP_QUEUE_FAILED" : "SITE_IMAGE_CLEANUP_QUEUED";
+      const errors = [result.error, cleanup.error, ...(queued.error ? [queued.error] : [])];
+      throw Object.assign(new AggregateError(errors, code, { cause: result.error }), { code });
     }
     throw result.error;
   }
@@ -373,36 +323,27 @@ export async function importBilibiliVideo(
 }
 
 export async function deleteTownImage(image: TownImage): Promise<void> {
-  if (UUID_PATTERN.test(image.id)) {
-    const { error } = await supabase.rpc("queue_town_image_deletion", { p_image_id: image.id });
-    if (error) throw error;
-    return;
-  }
-  if (image.storagePath) {
-    const cleanup = await supabase.storage.from("site-images").remove([image.storagePath]);
-    if (cleanup.error) throw cleanup.error;
-  }
+  const { error } = await supabase.rpc("queue_town_image_deletion", { p_image_id: image.id });
+  if (error) throw error;
 }
 
 // Database row mapping --------------------------------------------------------
-export function mapMember(row: Record<string, unknown>): TownMember {
+function mapMember(row: Record<string, unknown>): TownMember {
   return {
     id: String(row.id),
     username: String(row.username),
     roleZh: String(row.role_zh ?? ""),
     roleEn: String(row.role_en ?? ""),
     variant: String(row.variant ?? ""),
-    group: (row.member_group ?? (row.variant === "friend" ? "friend" : "town")) as TownMember["group"],
-    showOnHome: row.show_on_home === undefined
-      ? FEATURED_MEMBER_NAMES.has(String(row.username).toLowerCase())
-      : Boolean(row.show_on_home),
+    group: row.member_group as TownMember["group"],
+    showOnHome: Boolean(row.show_on_home),
     introZh: String(row.intro_zh ?? ""),
     introEn: String(row.intro_en ?? ""),
     sortOrder: Number(row.sort_order ?? 0)
   };
 }
 
-export function mapHistory(row: Record<string, unknown>, index = 0): HistoryEvent {
+function mapHistory(row: Record<string, unknown>): HistoryEvent {
   return {
     id: String(row.id),
     date: String(row.event_date),
@@ -411,25 +352,6 @@ export function mapHistory(row: Record<string, unknown>, index = 0): HistoryEven
     bodyZh: String(row.body_zh),
     bodyEn: String(row.body_en ?? ""),
     imageId: row.image_id ? String(row.image_id) : null,
-    // Installations that have not applied the additive homepage-selection
-    // column keep the historical four-item preview instead of rendering empty.
-    showOnHome: row.show_on_home === undefined ? index < 4 : Boolean(row.show_on_home),
-    sortOrder: Number(row.sort_order ?? 0)
-  };
-}
-
-function mapAnnouncement(row: Record<string, unknown>): TownAnnouncement {
-  return {
-    id: String(row.id),
-    kind: row.kind === "affair" ? "affair" : "announcement",
-    titleZh: String(row.title_zh),
-    titleEn: String(row.title_en ?? ""),
-    subtitleZh: String(row.subtitle_zh ?? ""),
-    subtitleEn: String(row.subtitle_en ?? ""),
-    bodyZh: String(row.body_zh ?? ""),
-    bodyEn: String(row.body_en ?? ""),
-    imageId: row.image_id ? String(row.image_id) : null,
-    visible: Boolean(row.is_visible ?? true),
     sortOrder: Number(row.sort_order ?? 0)
   };
 }
@@ -450,7 +372,8 @@ function mapImage(row: Record<string, unknown>): TownImage {
   return {
     id: String(row.id),
     mediaType: row.media_type === "bilibili" ? "bilibili" : "image",
-    area: row.area as TownImage["area"],
+    // 退役页面的媒体保留在“其他”，不让旧分类穿透到编辑器翻译映射。
+    area: townImageAreas.find(area => area === row.area) ?? "other",
     sourceUrl: String(row.source_url),
     storagePath: row.storage_path ? String(row.storage_path) : null,
     externalId: row.external_id ? String(row.external_id) : null,
@@ -461,32 +384,8 @@ function mapImage(row: Record<string, unknown>): TownImage {
     captionEn: String(row.caption_en ?? ""),
     altZh: String(row.alt_zh ?? ""),
     altEn: String(row.alt_en ?? ""),
-    layout: (row.layout ?? "standard") as TownImage["layout"],
+    layout: townImageLayouts.find(layout => layout === row.layout) ?? "standard",
     visible: Boolean(row.is_visible ?? true),
     sortOrder: Number(row.sort_order ?? 0)
-  };
-}
-
-export function mapResource(row: Record<string, unknown>): Resource {
-  return {
-    id: String(row.id),
-    externalId: row.external_id ? String(row.external_id) : null,
-    name: String(row.name),
-    description: String(row.description ?? ""),
-    source: row.source as Resource["source"],
-    resourceType: String(row.resource_type ?? "resource"),
-    projectType: String(row.project_type ?? row.resource_type ?? "other"),
-    url: String(row.url),
-    iconUrl: row.icon_url ? String(row.icon_url) : null,
-    author: String(row.author ?? ""),
-    currentVersion: String(row.current_version ?? "—"),
-    latestVersion: String(row.latest_version ?? row.current_version ?? "—"),
-    gameVersions: Array.isArray(row.game_versions) ? row.game_versions.map(String) : [],
-    loaders: Array.isArray(row.loaders) ? row.loaders.map(String) : [],
-    tags: Array.isArray(row.tags) ? row.tags.map(String) : [],
-    updateAvailable: Boolean(row.update_available),
-    projectUpdatedAt: row.project_updated_at ? String(row.project_updated_at) : null,
-    updateCheckedAt: row.update_checked_at ? String(row.update_checked_at) : null,
-    createdAt: String(row.created_at)
   };
 }

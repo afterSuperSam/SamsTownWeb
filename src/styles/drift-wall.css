@@ -51,19 +51,26 @@
   display:flex;
   flex:0 0 auto;
   flex-direction:column;
-  gap:clamp(20px,2.2vw,30px);
+  gap:var(--dw-row-gap,28px);
   padding-block:clamp(10px,1.2vw,16px);
 }
 
+.drift-wall__figure { margin:0; flex:0 0 auto; width:100%; }
+
 .drift-wall__tile {
+  padding:0;
+  border:0;
+  background:transparent;
+  font:inherit;
+  cursor:pointer;
   position:relative;
   display:block;
-  width:100%;
+  width:calc(100% - var(--dw-tile-inset,0%));
   flex:0 0 auto;
-  margin:0;
+  margin:0 auto;
   color:inherit;
   outline:0;
-  transform:translateZ(0);
+  transform:translate3d(var(--dw-tile-offset,0px),0,0);
   transform-style:preserve-3d;
   transition:transform .48s var(--ease-out);
 }
@@ -83,7 +90,7 @@
   box-shadow:
     0 20px 44px color-mix(in srgb,#2b1b10 25%,transparent),
     0 3px 10px color-mix(in srgb,#2b1b10 18%,transparent);
-  opacity:.84;
+  opacity:1;
   transition:opacity .4s var(--ease-out),box-shadow .4s var(--ease-out);
 }
 
@@ -103,7 +110,7 @@
   width:100%;
   height:100%;
   object-fit:cover;
-  filter:sepia(.08) saturate(.82) contrast(.96) brightness(.96);
+  filter:saturate(.96);
   transform:none;
   transition:filter .42s var(--ease-out),transform .58s var(--ease-out);
   user-select:none;
@@ -114,7 +121,7 @@
   position:absolute;
   z-index:1;
   inset:0;
-  background:color-mix(in srgb,var(--earth) 22%,transparent);
+  background:color-mix(in srgb,var(--earth) 8%,transparent);
   mix-blend-mode:multiply;
   pointer-events:none;
   transition:opacity .4s var(--ease-out);
@@ -140,7 +147,7 @@
 
 .drift-wall__tile:is(:hover,:focus-visible,:focus-within,.is-active) {
   z-index:3;
-  transform:translate3d(0,-9px,28px) scale(1.025);
+  transform:translate3d(var(--dw-tile-offset,0px),-9px,28px) scale(1.025);
 }
 
 .drift-wall__tile:is(:hover,:focus-visible,:focus-within,.is-active) .drift-wall__inner {
@@ -155,7 +162,7 @@
 .drift-wall__tile:is(:hover,:focus-visible,:focus-within,.is-active) .drift-wall__caption { transform:none; }
 .drift-wall__tile:is(:hover,:focus-visible,:focus-within,.is-active) .drift-wall__tint { opacity:0; }
 .drift-wall__tile:is(:hover,:focus-visible,:focus-within,.is-active) img { filter:sepia(0) saturate(1.04) contrast(1.02); transform:scale(1.035); }
-.drift-wall__tile:focus-visible .drift-wall__inner { box-shadow:0 0 0 3px var(--focus-ring),0 30px 72px color-mix(in srgb,#2b1b10 36%,transparent); }
+.drift-wall__tile:focus-visible .drift-wall__inner { box-shadow:0 0 28px var(--yingwu-glow),0 30px 72px color-mix(in srgb,#2b1b10 36%,transparent); }
 
 [data-theme="light"] .drift-wall {
   background:
@@ -173,16 +180,30 @@
   .drift-wall__caption { right:14px; bottom:13px; left:14px; font-size:11px; }
 }
 
+/* 键盘浏览保留原始节点，隐藏克隆并取消透视与渐隐遮罩。 */
+.drift-wall.is-focused { overflow:auto; mask-image:none; -webkit-mask-image:none; }
+.drift-wall.is-focused .drift-wall__plane { position:relative; top:auto; left:auto; display:grid; width:100%; height:auto; padding:16px; box-sizing:border-box; grid-template-columns:repeat(3,minmax(0,1fr)); transform:none!important; }
+.drift-wall.is-focused .drift-wall__column,
+.drift-wall.is-focused .drift-wall__track,
+.drift-wall.is-focused .drift-wall__cycle,
+.drift-wall.is-focused .drift-wall__figure { display:contents; }
+.drift-wall.is-focused .drift-wall__cycle[aria-hidden="true"] { display:none; }
+.drift-wall.is-focused .drift-wall__tile { width:100%; scroll-margin-block:96px 16px; transform:none!important; }
+@media (max-width:640px) {
+  .drift-wall.is-focused .drift-wall__plane { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+
 @media (prefers-reduced-motion:reduce) {
   .drift-wall { height:auto; overflow:visible; mask-image:none; }
-  .drift-wall__plane { position:relative; top:auto; left:auto; display:grid; width:100%; min-height:0; grid-template-columns:repeat(2,minmax(0,1fr)); transform:none!important; }
+  .drift-wall__plane,.drift-wall.is-focused .drift-wall__plane { position:relative; top:auto; left:auto; display:grid; width:100%; height:auto; min-height:0; grid-template-columns:repeat(2,minmax(0,1fr)); transform:none!important; }
   .drift-wall__column { display:contents; width:auto; }
   .drift-wall__track { display:contents; transform:none!important; }
   .drift-wall__cycle { display:contents; }
+  .drift-wall__figure { display:contents; }
   .drift-wall__cycle[aria-hidden="true"] { display:none; }
   .drift-wall__tile { width:auto; transform:none!important; }
 }
 
 @media (max-width:640px) and (prefers-reduced-motion:reduce) {
-  .drift-wall__plane { grid-template-columns:1fr; }
+  .drift-wall__plane,.drift-wall.is-focused .drift-wall__plane { grid-template-columns:1fr; }
 }

@@ -1,25 +1,99 @@
 import type { RealtimeChannel } from "@supabase/supabase-js";
+import { z } from "zod";
 import type { Profile } from "../../../domain/types";
-import type { Json, Tables } from "../../../lib/database.types";
+import type { Database, Tables } from "../../../lib/database.types";
 import { env } from "../../../lib/env";
 import { toJson } from "../../../lib/json";
 import { supabase } from "../../../lib/supabase";
+import { atlasConfig, type ChunkBounds } from "../domain/atlasConfig";
 import type {
-  ClaimDraft,
-  MapClaim,
-  MapMarker,
+  ProjectDraft,
+  MapProject,
   MapSnapshot,
-  MarkerDraft,
-  SaveClaimResult,
+  SaveProjectResult,
   TownMap
 } from "../domain/mapTypes";
+import type { MapListPage } from "../domain/mapTypes";
 
 type MapRow = Tables<"town_maps">;
-type ClaimRow = Tables<"map_claims">;
-type MarkerRow = Tables<"map_markers">;
-type ClaimCellRow = Pick<Tables<"map_claim_cells">, "claim_id" | "chunk_column" | "chunk_row">;
+type ProjectRow = Tables<"map_claims">;
 
-const MAP_CELL_PAGE_SIZE = 1000;
+type MapFunctions = Database["public"]["Functions"];
+type MapRpcName = Extract<keyof MapFunctions, "get_map_claim_detail" | "list_map_claim_summaries">;
+
+// RPC 签名来自 Database；JSON 在唯一边界解析后交给现有 mapper。
+const coordinateSchema = z.object({ column: z.number().int().nonnegative(), row: z.number().int().nonnegative() });
+const cellsSchema = z.array(coordinateSchema).refine(cells =>
+  new Set(cells.map(cell => `${cell.column}:${cell.row}`)).size === cells.length);
+const boundsSchema = z.object({
+  minColumn: z.number().int().nonnegative(), minRow: z.number().int().nonnegative(),
+  maxColumn: z.number().int().nonnegative(), maxRow: z.number().int().nonnegative()
+}).refine(bounds => bounds.maxColumn >= bounds.minColumn && bounds.maxRow >= bounds.minRow);
+const projectRowSchema = z.object({
+  id: z.string().min(1), map_id: z.string().min(1), owner_id: z.string().min(1),
+  project_name: z.string(), minecraft_username: z.string(), description: z.string(), color: z.string(),
+  created_at: z.string(), updated_at: z.string()
+});
+const projectDetailSchema = projectRowSchema.extend({ cells: cellsSchema });
+const projectSummarySchema = projectRowSchema.extend({ cellCount: z.number().int().nonnegative(), bounds: boundsSchema.nullable() });
+const projectListSchema = z.object({
+  total: z.number().int().nonnegative(), items: z.array(projectSummarySchema).max(atlasConfig.listPageSize)
+});
+
+async function requestMapJson<Name extends MapRpcName, Result>(
+  name: Name, args: MapFunctions[Name]["Args"], schema: z.ZodType<Result>, invalidKey = "error.generic"
+): Promise<Result> {
+  const { data, error } = await supabase.rpc(name, args);
+  throwIfError(error);
+  const parsed = schema.safeParse(data);
+  if (!parsed.success) throw new Error(invalidKey);
+  return parsed.data;
+}
+
+function projectFromRow(row: ProjectRow, cells: MapProject["cells"] = [], summary?: { cellCount?: number; bounds?: ChunkBounds | null }): MapProject {
+  return {
+    id: row.id, mapId: row.map_id, ownerId: row.owner_id, projectName: row.project_name,
+    minecraftUsername: row.minecraft_username, description: row.description, color: row.color,
+    cells, createdAt: row.created_at, updatedAt: row.updated_at,
+    ...summary
+  };
+}
+
+export async function getProjectDetail(mapId: string, projectId: string): Promise<MapProject> {
+  const row = await requestMapJson("get_map_claim_detail", { p_map_id: mapId, p_claim_id: projectId },
+    projectDetailSchema.nullable(), "error.mapDetailIncomplete");
+  if (!row) throw new Error("error.mapNotFound");
+  if (row.id !== projectId || row.map_id !== mapId) throw new Error("error.mapDetailIncomplete");
+  return projectFromRow(row, row.cells);
+}
+
+// 分页读取项目格子，全图显示真实边界。
+export async function getMapSnapshot(mapId: string): Promise<MapSnapshot> {
+  const [rows, cells] = await Promise.all([
+    collectPages<ProjectRow>(async (from, to) => supabase.from("map_claims").select("*")
+      .eq("map_id", mapId).order("id").range(from, to)),
+    collectPages<Pick<Tables<"map_claim_cells">, "claim_id" | "chunk_column" | "chunk_row">>(async (from, to) =>
+      supabase.from("map_claim_cells").select("claim_id,chunk_column,chunk_row")
+        .eq("map_id", mapId).order("chunk_row").order("chunk_column").range(from, to))
+  ]);
+  const projects = new Map(rows.map(row => [row.id, projectFromRow(row)]));
+  for (const cell of cells) {
+    const project = projects.get(cell.claim_id);
+    if (!project) throw new Error("error.mapDataChanged");
+    project.cells.push({ column: cell.chunk_column, row: cell.chunk_row });
+  }
+  return { projects: [...projects.values()] };
+}
+
+export async function listMapProjects(mapId: string, pageIndex: number): Promise<MapListPage> {
+  const args: MapFunctions["list_map_claim_summaries"]["Args"] = {
+    p_map_id: mapId,
+    p_offset: pageIndex * atlasConfig.listPageSize, p_limit: atlasConfig.listPageSize
+  };
+  const page = await requestMapJson("list_map_claim_summaries", args, projectListSchema);
+  if (page.items.some(row => row.map_id !== mapId)) throw new Error("error.mapDetailIncomplete");
+  return { projects: page.items.map(row => projectFromRow(row, [], { cellCount: row.cellCount, bounds: row.bounds })), total: page.total };
+}
 
 const throwIfError = (error: { message: string } | null) => {
   if (error) throw error;
@@ -44,59 +118,16 @@ const mapFromRow = (row: MapRow): TownMap => ({
 });
 
 export async function listTownMaps(): Promise<TownMap[]> {
-  const { data, error } = await supabase.from("town_maps").select("*").order("sort_order").order("created_at");
-  throwIfError(error);
-  return (data ?? []).map(mapFromRow);
+  const maps = await collectPages<MapRow>(async (from, to) => supabase.from("town_maps").select("*")
+    .order("sort_order").order("created_at").order("id").range(from, to));
+  return maps.map(mapFromRow);
 }
 
-export async function getMapSnapshot(mapId: string): Promise<MapSnapshot> {
-  const [claims, markers] = await Promise.all([getMapClaims(mapId), getMapMarkers(mapId)]);
-  return { claims, markers };
-}
-
-export async function getMapClaims(mapId: string): Promise<MapClaim[]> {
-  const [claimsResult, cellsResult] = await Promise.all([
-    supabase.from("map_claims").select("*").eq("map_id", mapId).order("updated_at", { ascending: false }),
-    collectPages<ClaimCellRow>(async (from, to) => {
-      const result = await supabase.from("map_claim_cells")
-        .select("claim_id,chunk_column,chunk_row")
-        .eq("map_id", mapId)
-        .order("claim_id")
-        .order("chunk_row")
-        .order("chunk_column")
-        .range(from, to);
-      return { data: result.data, error: result.error };
-    })
-  ]);
-  throwIfError(claimsResult.error);
-  const cellsByClaim = new Map<string, MapClaim["cells"]>();
-  for (const cell of cellsResult) {
-    const cells = cellsByClaim.get(cell.claim_id) ?? [];
-    cells.push({ column: cell.chunk_column, row: cell.chunk_row });
-    cellsByClaim.set(cell.claim_id, cells);
-  }
-  return (claimsResult.data ?? []).map((row: ClaimRow): MapClaim => ({
-    id: row.id,
-    mapId: row.map_id,
-    ownerId: row.owner_id,
-    projectName: row.project_name,
-    minecraftUsername: row.minecraft_username,
-    description: row.description,
-    color: row.color,
-    status: parseClaimStatus(row.status),
-    cells: cellsByClaim.get(row.id) ?? [],
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
-  }));
-}
-
-// Supabase projects commonly cap a single select at 1,000 rows. Claims can
-// legitimately exceed that size, so map cells are read in stable, inclusive
-// ranges until the final short page is reached.
-export async function collectPages<T>(
-  fetchPage: (from: number, to: number) => Promise<{ data: T[] | null; error: { message: string } | null }>,
-  pageSize = MAP_CELL_PAGE_SIZE
+// 地图目录使用稳定分页，避免单次查询行数上限造成静默截断。
+async function collectPages<T>(
+  fetchPage: (from: number, to: number) => Promise<{ data: T[] | null; error: { message: string } | null }>
 ): Promise<T[]> {
+  const pageSize = atlasConfig.pageSize;
   const rows: T[] = [];
   for (let from = 0; ; from += pageSize) {
     const { data, error } = await fetchPage(from, from + pageSize - 1);
@@ -107,26 +138,7 @@ export async function collectPages<T>(
   }
 }
 
-export async function getMapMarkers(mapId: string): Promise<MapMarker[]> {
-  const markersResult = await supabase.from("map_markers").select("*")
-    .eq("map_id", mapId).order("updated_at", { ascending: false });
-  throwIfError(markersResult.error);
-  return (markersResult.data ?? []).map((row: MarkerRow): MapMarker => ({
-    id: row.id,
-    mapId: row.map_id,
-    name: row.name,
-    iconType: parseMarkerIcon(row.icon_type),
-    color: row.color,
-    description: row.description,
-    pixelX: row.pixel_x,
-    pixelY: row.pixel_y,
-    createdBy: row.created_by,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
-  }));
-}
-
-export async function saveClaim(draft: ClaimDraft): Promise<SaveClaimResult> {
+export async function saveProject(draft: ProjectDraft): Promise<SaveProjectResult> {
   const { data, error } = await supabase.rpc("save_map_claim", {
     p_claim_id: draft.id ?? null,
     p_map_id: draft.mapId,
@@ -134,67 +146,18 @@ export async function saveClaim(draft: ClaimDraft): Promise<SaveClaimResult> {
     p_minecraft_username: draft.minecraftUsername,
     p_description: draft.description,
     p_color: draft.color,
-    p_status: draft.status,
     p_cells: toJson(draft.cells),
     ...(draft.ownerId ? { p_owner_id: draft.ownerId } : {})
   });
   throwIfError(error);
-  return parseSaveClaimResult(data);
+  const result = saveProjectResultSchema.parse(data);
+  return { projectId: result.claimId, conflicts: result.conflicts };
 }
 
-function parseSaveClaimResult(value: Json): SaveClaimResult {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("error.generic");
-  const claimId = value.claimId;
-  const conflicts = value.conflicts;
-  if ((claimId !== null && typeof claimId !== "string") || !Array.isArray(conflicts)) throw new Error("error.generic");
-  const parsedConflicts = conflicts.map(cell => {
-    if (!cell || typeof cell !== "object" || Array.isArray(cell)
-      || !Number.isInteger(cell.column) || !Number.isInteger(cell.row)) throw new Error("error.generic");
-    return { column: Number(cell.column), row: Number(cell.row) };
-  });
-  return { claimId, conflicts: parsedConflicts };
-}
+const saveProjectResultSchema = z.object({ claimId: z.string().nullable(), conflicts: z.array(coordinateSchema) });
 
-export async function deleteClaim(id: string): Promise<void> {
+export async function deleteProject(id: string): Promise<void> {
   const { error } = await supabase.from("map_claims").delete().eq("id", id);
-  throwIfError(error);
-}
-
-export async function saveMarker(draft: MarkerDraft): Promise<MapMarker> {
-  const values = {
-    map_id: draft.mapId,
-    name: draft.name.trim(),
-    icon_type: draft.iconType,
-    color: draft.color,
-    description: draft.description,
-    pixel_x: Math.round(draft.pixelX),
-    pixel_y: Math.round(draft.pixelY)
-  };
-  if (draft.id) {
-    const { data, error } = await supabase.from("map_markers").update(values).eq("id", draft.id).select().single();
-    throwIfError(error);
-    return markerFromRow(data);
-  }
-  const { data: session } = await supabase.auth.getUser();
-  if (!session.user) throw new Error("error.session");
-  const { data, error } = await supabase.from("map_markers")
-    .insert({ ...values, created_by: session.user.id }).select().single();
-  throwIfError(error);
-  return markerFromRow(data);
-}
-
-function markerFromRow(row: MarkerRow | null): MapMarker {
-  if (!row) throw new Error("error.generic");
-  return {
-    id: row.id, mapId: row.map_id, name: row.name, iconType: parseMarkerIcon(row.icon_type),
-    color: row.color, description: row.description, pixelX: row.pixel_x,
-    pixelY: row.pixel_y, createdBy: row.created_by, createdAt: row.created_at,
-    updatedAt: row.updated_at
-  };
-}
-
-export async function deleteMarker(id: string): Promise<void> {
-  const { error } = await supabase.from("map_markers").delete().eq("id", id);
   throwIfError(error);
 }
 
@@ -202,23 +165,11 @@ export async function listMapOwners(): Promise<Profile[]> {
   const { data, error } = await supabase.rpc("list_map_owners");
   throwIfError(error);
   return (data ?? []).map(row => ({
-    id: row.id, username: row.username, role: row.role, mustChangePassword: row.must_change_password
+    id: row.id, username: row.username, role: row.role === "owner" ? "owner" : "member", mustChangePassword: row.must_change_password
   }));
 }
 
-function parseClaimStatus(value: string): MapClaim["status"] {
-  if (["planned", "in_progress", "completed", "paused", "abandoned"].includes(value)) {
-    return value as MapClaim["status"];
-  }
-  throw new Error("error.generic");
-}
-
-function parseMarkerIcon(value: string): MapMarker["iconType"] {
-  if (["building", "machine", "other"].includes(value)) return value as MapMarker["iconType"];
-  throw new Error("error.generic");
-}
-
-export async function getTileRequest(map: TownMap) {
+export async function getTileRequest(map: Pick<TownMap, "storagePrefix">) {
   const { data } = await supabase.auth.getSession();
   if (!env.VITE_SUPABASE_URL || !env.VITE_SUPABASE_ANON_KEY) throw new Error("error.notConfigured");
   const accessToken = data.session?.access_token ?? env.VITE_SUPABASE_ANON_KEY;
@@ -244,20 +195,20 @@ export function subscribeToTileAuthentication(onChange: (headers: Record<string,
   return () => data.subscription.unsubscribe();
 }
 
-export type MapChangeArea = "claims" | "markers";
-
-export function subscribeToMap(mapId: string, onChange: (area: MapChangeArea) => void): RealtimeChannel {
+export function subscribeToMap(mapId: string, onChange: () => void): RealtimeChannel {
   return supabase.channel(`town-map:${mapId}`)
-    .on("postgres_changes", { event: "*", schema: "public", table: "map_claims", filter: `map_id=eq.${mapId}` }, () => onChange("claims"))
-    .on("postgres_changes", { event: "*", schema: "public", table: "map_claim_cells", filter: `map_id=eq.${mapId}` }, () => onChange("claims"))
-    .on("postgres_changes", { event: "*", schema: "public", table: "map_markers", filter: `map_id=eq.${mapId}` }, () => onChange("markers"))
-    .subscribe();
+    .on("postgres_changes", { event: "*", schema: "public", table: "map_claims", filter: `map_id=eq.${mapId}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "map_claim_cells", filter: `map_id=eq.${mapId}` }, onChange)
+    .subscribe(status => {
+      if (status !== "SUBSCRIBED") return;
+      onChange();
+    });
 }
 
 export function subscribeToMapList(onChange: () => void): RealtimeChannel {
   return supabase.channel("town-map-list")
     .on("postgres_changes", { event: "*", schema: "public", table: "town_maps" }, onChange)
-    .subscribe();
+    .subscribe(status => { if (status === "SUBSCRIBED") onChange(); });
 }
 
 export const unsubscribeFromMap = (channel: RealtimeChannel) => supabase.removeChannel(channel);
