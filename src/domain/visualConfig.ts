@@ -3,6 +3,7 @@ import { z } from "zod";
 // 视觉交互参数集中校验；主题和背景强度仍由 global.css 变量管理。
 const visualConfigSchema = z.object({
   homeBlogPostLimit: z.number().int().min(1).max(3),
+  heroDecodeTimeoutMilliseconds: z.number().int().positive(),
   loadingSignature: z.object({
     continuous: z.boolean(),
     durationMilliseconds: z.number().int().positive(),
@@ -57,6 +58,7 @@ const visualConfigSchema = z.object({
 
 export const visualConfig = visualConfigSchema.parse({
   homeBlogPostLimit: 1,
+  heroDecodeTimeoutMilliseconds: 1_500,
   loadingSignature: {
     durationMilliseconds: 1600, strokePauseMilliseconds: 0, easing: "cubic-bezier(.55,0,1,1)",
     continuous: true,
@@ -83,7 +85,7 @@ export const visualConfig = visualConfigSchema.parse({
     settleDurationMilliseconds: 560,
     versionCharacterDurationMilliseconds: 360,
     versionCharacterStaggerMilliseconds: 45,
-    href: "https://blog.yingwutown.top/"
+    href: "https://blog.moesam.com/"
   },
   driftWall: {
     speed: 10,

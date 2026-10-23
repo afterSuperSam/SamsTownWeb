@@ -36,7 +36,8 @@ export async function processAccountCleanup(app: FastifyInstance): Promise<void>
     return;
   }
   for (const item of (pending.data ?? []) as AccountDeletionRow[]) {
-    const deleted = await supabaseAdmin.auth.admin.deleteUser(item.user_id);
+    const transferred = await supabaseAdmin.rpc("transfer_account_storage", { p_user_id: item.user_id });
+    const deleted = transferred.error ? { error: transferred.error } : await supabaseAdmin.auth.admin.deleteUser(item.user_id);
     const alreadyMissing = deleted.error && (deleted.error as { status?: number }).status === 404;
     if (!deleted.error || alreadyMissing) {
       const cleanup = await supabaseAdmin.from("account_deletion_queue").delete().eq("user_id", item.user_id);

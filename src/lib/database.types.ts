@@ -312,6 +312,7 @@ export type Database = {
           created_at: string
           id: string
           must_change_password: boolean
+          sessions_valid_after: string
           role: Database["public"]["Enums"]["app_role"]
           updated_at: string
           username: string
@@ -320,6 +321,7 @@ export type Database = {
           created_at?: string
           id: string
           must_change_password?: boolean
+          sessions_valid_after?: string
           role?: Database["public"]["Enums"]["app_role"]
           updated_at?: string
           username: string
@@ -328,6 +330,7 @@ export type Database = {
           created_at?: string
           id?: string
           must_change_password?: boolean
+          sessions_valid_after?: string
           role?: Database["public"]["Enums"]["app_role"]
           updated_at?: string
           username?: string
@@ -741,8 +744,15 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      get_site_collection: { Args: { p_collection: string }; Returns: Json }
+      save_site_collection: { Args: { p_collection: string; p_revision: string; p_items: Json }; Returns: string }
+      get_map_snapshot: { Args: { p_map_id: string }; Returns: Json }
+      is_current_auth_session: { Args: { p_user_id: string; p_session_id: string }; Returns: boolean }
+      transfer_account_storage: { Args: { p_user_id: string }; Returns: undefined }
+      delete_town_map: { Args: { p_map_id: string; p_confirm_name: string; p_storage_prefix: string; p_actor_id: string }; Returns: undefined }
       commit_town_map_image_v2: {
         Args: {
+          p_actor_id?: string
           p_clear_existing: boolean
           p_image_height: number
           p_image_width: number
@@ -779,7 +789,6 @@ export type Database = {
         Args: { p_days?: number }
         Returns: Json
       }
-      // 按待应用的 20261020041649 迁移同步；部署后用 CLI 再生成核对。
       get_map_claim_detail: {
         Args: { p_map_id: string; p_claim_id: string }
         Returns: Json

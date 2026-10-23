@@ -3,11 +3,9 @@ import { Layers3, Menu, Pencil, Plus, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { ConfirmDialog, Dialog } from "../components/Dialog";
-import { HeroTransition } from "../components/HeroTransition";
-import { TownImage } from "../components/TownImage";
 import { SelectField } from "../components/SelectField";
 import { PageLoading } from "../components/TerrainLoading";
-import { Notice, RetryNotice } from "../components/RetryNotice";
+import { Notice } from "../components/RetryNotice";
 import { can } from "../domain/permissions";
 import type { Profile } from "../domain/types";
 import { ProjectEditor } from "../features/atlas/components/ProjectEditor";
@@ -27,7 +25,6 @@ import { useMapData } from "../features/atlas/hooks/useMapData";
 import { atlasConfig, containsCell } from "../features/atlas/domain/atlasConfig";
 import { getErrorTranslationKey } from "../i18n/errors";
 import { useI18n } from "../i18n/I18nContext";
-import { useTownHero } from "../hooks/useTownHero";
 import { useAuth } from "../state/AuthContext";
 
 // 地图读取错误保留分类，部署异常转换为访客可理解的恢复提示。
@@ -45,7 +42,6 @@ export function AtlasPage() {
   const navigate = useNavigate();
   const viewportRef = useRef<MapViewportHandle>(null);
   const noticeTimer = useRef<number | null>(null);
-  const { image: heroImage, ready: heroReady, error: heroError, retry: retryHero } = useTownHero("mapHero");
   const [selection, setSelection] = useState<ChunkCoordinate[]>([]);
   const validatedChanges = useRef(new Set<string>());
   const operationScope = `${data.scope}:${data.activeMapId}:${data.activeMap?.tileRevision}`;
@@ -254,19 +250,15 @@ export function AtlasPage() {
     }
   }
 
-  if (data.loading || data.snapshotLoading || !heroReady) return <PageLoading label={t("app.loading.terrain")} />;
+  if (data.loading || data.snapshotLoading) return <PageLoading label={t("app.loading.terrain")} />;
 
   return (
     <main className="map-page ambient-page">
       <header className="map-hero page-hero hero-copy-sequence">
-        {heroImage ? <div className="page-hero-media"><TownImage className="map-hero-image page-hero-image" source={heroImage.sourceUrl} alt={language === "zh-CN" ? heroImage.altZh : heroImage.altEn} loading="eager" fetchPriority="high" /></div> : null}
-        <div className="page-hero-shade" />
         <span className="eyebrow">{t("map.eyebrow")}</span>
         <h1>{t("map.title")}</h1>
         <p>{t("map.body")}</p>
       </header>
-      <HeroTransition />
-      <RetryNotice error={heroError} onRetry={retryHero} />
 
       <section className="town-map-section">
         <div className="map-section-heading">

@@ -10,6 +10,8 @@ import {
 } from "react";
 import { defaultContent } from "../domain/defaults";
 import { PageLoading } from "../components/TerrainLoading";
+import { Notice } from "../components/RetryNotice";
+import { Button } from "../components/Button";
 import type { Language, SiteContent } from "../domain/types";
 import { getSiteContent } from "../services/siteRepository";
 import {
@@ -45,6 +47,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const [language, setLanguage] = useState<Language>(getInitialLanguage);
   const [switching, setSwitching] = useState(false);
   const [ready, setReady] = useState(false);
+  const [contentUnavailable, setContentUnavailable] = useState(false);
   const [content, setContent] = useState<SiteContent>(defaultContent);
   const switchTimer = useRef<number | null>(null);
   const contentRevision = useRef(0);
@@ -54,7 +57,13 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     const revision = ++contentRevision.current;
     try {
       const next = await getSiteContent();
-      if (mounted.current && revision === contentRevision.current) setContent(next);
+      if (mounted.current && revision === contentRevision.current) {
+        setContent(next);
+        setContentUnavailable(false);
+      }
+    } catch (error) {
+      if (mounted.current && revision === contentRevision.current) setContentUnavailable(true);
+      throw error;
     } finally {
       if (mounted.current && revision === contentRevision.current) setReady(true);
     }
@@ -111,6 +120,10 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   return (
     <I18nContext.Provider value={value}>
+      {ready && contentUnavailable ? <Notice className="site-load-notice">
+        {t("app.contentUnavailable")}
+        <Button className="small" onClick={() => { void reloadContent().catch(() => undefined); }}>{t("app.retry")}</Button>
+      </Notice> : null}
       {ready ? children : <PageLoading label={formatTranslation("app.loading.terrain", language)} />}
     </I18nContext.Provider>
   );

@@ -4,7 +4,6 @@ import { AppShell } from "./components/AppShell";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { PageLoading } from "./components/TerrainLoading";
 import { useI18n } from "./i18n/I18nContext";
-import { useAuth } from "./state/AuthContext";
 import { HomePage } from "./pages/HomePage";
 
 const HistoryPage = lazy(() => import("./pages/HistoryPage").then(module => ({ default: module.HistoryPage })));
@@ -35,11 +34,6 @@ function NotFoundPage() {
 }
 
 export function App() {
-  const { loading: authLoading } = useAuth();
-  const { t } = useI18n();
-
-  if (authLoading) return <PageLoading label={t("app.loading.terrain")} />;
-
   return (
     <Routes>
       <Route element={<AppShell />}>

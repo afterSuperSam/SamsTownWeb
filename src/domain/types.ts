@@ -1,6 +1,6 @@
 export type Language = "zh-CN" | "en";
 export type AppRole = "owner" | "member";
-export const townImageAreas = ["hero", "story", "gallery", "join", "history", "mapHero", "other"] as const;
+export const townImageAreas = ["hero", "story", "gallery", "join", "history", "other"] as const;
 export type TownImageArea = typeof townImageAreas[number];
 export const townImageLayouts = ["standard", "wide", "tall"] as const;
 export type TownImageLayout = typeof townImageLayouts[number];
@@ -14,7 +14,6 @@ export interface LocalizedText {
 
 interface SiteSettings {
   qqGroup: string;
-  mayorQq: string;
   kookUrl: string;
 }
 

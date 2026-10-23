@@ -39,7 +39,10 @@ async function processStorageCleanup(app: FastifyInstance): Promise<void> {
   for (const item of (pending.data ?? []) as CleanupRow[]) {
     try {
       const bucket = supabaseAdmin.storage.from(item.bucket_id);
-      const paths = item.recursive ? await listStorageFiles(item.bucket_id, item.object_path) : [item.object_path];
+      const paths = item.recursive ? await listStorageFiles(item.bucket_id, item.object_path)
+        : item.bucket_id === "site-images"
+          ? [item.object_path, ...Object.values(config.SITE_IMAGE_SIZES).map(([, height]) => `${item.object_path}.display/${height}.webp`)]
+          : [item.object_path];
       for (let index = 0; index < paths.length; index += 100) {
         const removal = await bucket.remove(paths.slice(index, index + 100));
         if (removal.error) throw removal.error;

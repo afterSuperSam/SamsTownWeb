@@ -173,6 +173,7 @@ export function DriftWall({
     }
 
     let frame = 0;
+    let inViewport = false;
     const animate = (timestamp: number) => {
       if (lastTimestampRef.current === null) lastTimestampRef.current = timestamp;
       const delta = Math.min(.05, Math.max(0, timestamp - lastTimestampRef.current) / 1000);
@@ -201,8 +202,21 @@ export function DriftWall({
       frame = requestAnimationFrame(animate);
     };
 
-    frame = requestAnimationFrame(animate);
+    // 只在照片墙可见时绘制，离开视野后保留位置并停止逐帧写入样式。
+    const updatePlayback = () => {
+      cancelAnimationFrame(frame);
+      lastTimestampRef.current = null;
+      if (inViewport && !document.hidden) frame = requestAnimationFrame(animate);
+    };
+    const observer = new IntersectionObserver(([entry]) => {
+      inViewport = entry.isIntersecting;
+      updatePlayback();
+    });
+    if (containerRef.current) observer.observe(containerRef.current);
+    document.addEventListener("visibilitychange", updatePlayback);
     return () => {
+      observer.disconnect();
+      document.removeEventListener("visibilitychange", updatePlayback);
       cancelAnimationFrame(frame);
       lastTimestampRef.current = null;
     };

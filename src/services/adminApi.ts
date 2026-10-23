@@ -9,4 +9,4 @@ export const updateManagedAccount = (
   values: { role?: AppRole; temporaryPassword?: string }
 ) => authenticatedApiRequest<{ ok: boolean }>(`/api/accounts/${id}`, { method: "PATCH", body: JSON.stringify(values) });
 export const deleteAccount = (id: string) =>
-  authenticatedApiRequest<{ ok: boolean }>(`/api/accounts/${id}`, { method: "DELETE" });
+  authenticatedApiRequest<{ ok: boolean; pending: boolean }>(`/api/accounts/${id}`, { method: "DELETE" });

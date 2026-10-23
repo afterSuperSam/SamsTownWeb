@@ -51,7 +51,7 @@ export async function createTownMap(image: StagedMapImage, fields: MapFields, ac
       created_by: actorId
     }).select().single();
     if (error) {
-      await removeMapPrefixSafely(prefix, log);
+      await cleanupRejectedMapCommit(prefix, error, log);
       throw mapDatabaseError(error);
     }
     return serializeMap(data as MapRow);
@@ -72,7 +72,7 @@ export async function updateTownMap(id: string, fields: MapFields) {
   return serializeMap(data as MapRow);
 }
 
-export async function replaceTownMapImage(id: string, image: StagedMapImage, clearExisting: boolean, log: FastifyBaseLogger) {
+export async function replaceTownMapImage(id: string, image: StagedMapImage, clearExisting: boolean, actorId: string, log: FastifyBaseLogger) {
   const existingResult = await supabaseAdmin.from("town_maps").select("*").eq("id", id).single();
   if (existingResult.error) {
     await cleanupStagedMapSafely(image, log);
@@ -91,6 +91,7 @@ export async function replaceTownMapImage(id: string, image: StagedMapImage, cle
     }
     const originalPath = await uploadMapAssets(image, tiles, prefix, requireExtension(image.mimetype), log);
     const { data, error } = await supabaseAdmin.rpc("commit_town_map_image_v2", {
+      p_actor_id: actorId,
       p_map_id: id,
       p_image_width: tiles.width,
       p_image_height: tiles.height,
@@ -102,18 +103,17 @@ export async function replaceTownMapImage(id: string, image: StagedMapImage, cle
       p_clear_existing: dimensionsChanged
     });
     if (error) {
-      await removeMapPrefixSafely(prefix, log);
+      await cleanupRejectedMapCommit(prefix, error, log);
       throw mapDatabaseError(error);
     }
-    const committed = data as { map: MapRow; replacedStoragePrefix: string };
-    await removeMapPrefixSafely(committed.replacedStoragePrefix, log);
+    const committed = data as { map: MapRow };
     return serializeMap(committed.map);
   } finally {
     await cleanupStagedMapSafely(image, log);
   }
 }
 
-export async function deleteTownMap(id: string, confirmName: string, log: FastifyBaseLogger) {
+export async function deleteTownMap(id: string, confirmName: string, actorId: string) {
   const existingResult = await supabaseAdmin.from("town_maps").select("name,storage_prefix").eq("id", id).single();
   if (existingResult.error) throw mapDatabaseError(existingResult.error);
   if (confirmName !== existingResult.data.name) {
@@ -122,20 +122,26 @@ export async function deleteTownMap(id: string, confirmName: string, log: Fastif
     throw error;
   }
   // 仅删除已确认的版本，避免换图或改名并发时误删新地图并遗留文件。
-  const { data, error } = await supabaseAdmin.from("town_maps").delete().eq("id", id)
-    .eq("storage_prefix", existingResult.data.storage_prefix).eq("name", confirmName).select("id").maybeSingle();
+  const { error } = await supabaseAdmin.rpc("delete_town_map", {
+    p_map_id: id, p_confirm_name: confirmName,
+    p_storage_prefix: existingResult.data.storage_prefix, p_actor_id: actorId
+  });
   if (error) throw mapDatabaseError(error);
-  if (!data) throw Object.assign(new Error("error.mapDataChanged"), { statusCode: 409 });
-  await removeMapPrefixSafely(existingResult.data.storage_prefix, log);
   return { ok: true as const };
 }
 
-async function removeMapPrefixSafely(prefix: string, log: FastifyBaseLogger): Promise<void> {
+// 网络中断不能证明数据库回滚；结果不明时保留切片，防止误删已生效的底图。
+async function cleanupRejectedMapCommit(prefix: string, error: { code?: string }, log: FastifyBaseLogger): Promise<void> {
+  // 仅数据、约束、权限或显式过程异常可确认失败；连接类与完成状态不明不能清理。
+  if (!error.code || !/^(22|23|42|P0)[0-9A-Z]{3}$/.test(error.code)) {
+    log.error({ err: error, prefix }, "Map commit outcome unknown; assets retained for reconciliation");
+    return;
+  }
   try {
     await removeMapPrefix(prefix);
-  } catch (error) {
-    log.error({ err: error, prefix }, "Map Storage cleanup deferred");
-    await queueStorageCleanup("town-maps", prefix, true, error, log);
+  } catch (cleanupError) {
+    log.error({ err: cleanupError, prefix }, "Map Storage cleanup deferred");
+    await queueStorageCleanup("town-maps", prefix, true, cleanupError, log);
   }
 }
 
@@ -158,6 +164,8 @@ function requireExtension(mimetype: string) {
 }
 
 function mapDatabaseError(error: { code?: string; message?: string }): Error {
+  if (error.code === "42501") return Object.assign(new Error("error.permission"), { statusCode: 403 });
+  if (error.message?.includes("error.mapDataChanged")) return Object.assign(new Error("error.mapDataChanged"), { statusCode: 409 });
   if (error.message?.includes("error.mapDimensionsChanged")) {
     return Object.assign(new Error("error.mapDimensionsChanged"), { statusCode: 409 });
   }

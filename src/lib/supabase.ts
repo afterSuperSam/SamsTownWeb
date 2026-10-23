@@ -6,7 +6,17 @@ import { env, isSupabaseConfigured } from "./env";
 export const supabase = createClient<Database>(
   env.VITE_SUPABASE_URL ?? "https://placeholder.supabase.co",
   env.VITE_SUPABASE_ANON_KEY ?? "placeholder-anon-key-placeholder",
-  { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }
+  {
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+    // Auth、数据和 Storage 共用截止时间，保留调用方取消信号及响应体超时。
+    global: {
+      fetch: (input, init) => {
+        const signal = AbortSignal.timeout(env.VITE_API_TIMEOUT_MS);
+        const callerSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+        return fetch(input, { ...init, signal: callerSignal ? AbortSignal.any([callerSignal, signal]) : signal });
+      }
+    }
+  }
 );
 
 export { isSupabaseConfigured };

@@ -12,7 +12,7 @@ import { HeroTransition } from "../components/HeroTransition";
 import { MediaFigure } from "../components/MediaFigure";
 import { useInitialHomeLoading, PageLoading } from "../components/TerrainLoading";
 import { preloadTownImage, TownImage as TownImageAsset } from "../components/TownImage";
-import { defaultFaqs, defaultImages, defaultMembers } from "../domain/defaults";
+import { defaultImages } from "../domain/defaults";
 import { selectTownGalleryMedia } from "../domain/townGallery";
 import { visualConfig } from "../domain/visualConfig";
 import type {
@@ -25,8 +25,9 @@ import { useScrollReveal } from "../hooks/useScrollReveal";
 import { getErrorTranslationKey } from "../i18n/errors";
 import { useI18n } from "../i18n/I18nContext";
 import { safeExternalUrl } from "../lib/externalUrl";
+import { env } from "../lib/env";
 import { getTownAgeDays } from "../lib/townAge";
-import { getBlogPosts, getSiteBundle, type SiteBundle } from "../services/siteRepository";
+import { getBlogPosts, getHomeData, type SiteBundle } from "../services/siteRepository";
 
 function localizedImageText(image: TownImage, field: "caption" | "alt", language: Language) {
   const value = language === "zh-CN" ? image[`${field}Zh`] : image[`${field}En`];
@@ -79,9 +80,9 @@ export function HomePage() {
   const reportLoading = useInitialHomeLoading();
   const [data, setData] = useState<SiteBundle>({
     content: sharedContent,
-    members: defaultMembers,
+    members: [],
     images: defaultImages,
-    faqs: defaultFaqs
+    faqs: []
   });
   const [siteReady, setSiteReady] = useState(false);
   const [loadError, setLoadError] = useState<ReturnType<typeof getErrorTranslationKey> | null>(null);
@@ -91,22 +92,24 @@ export function HomePage() {
   const loadSiteData = useCallback(async () => {
     const revision = ++siteRevision.current;
     setLoadError(null);
-    try {
-      const bundle = await getSiteBundle();
-      if (revision !== siteRevision.current) return;
-      const hero = bundle.images
-        .filter(image => image.visible && image.mediaType === "image" && image.area === "hero")
-        .sort((first, second) => first.sortOrder - second.sortOrder)[0];
-      if (hero) await preloadTownImage(hero.sourceUrl);
-      if (revision !== siteRevision.current) return;
-      setData(bundle);
-    } catch (error) {
+    const requests = getHomeData();
+    const fail = (error: unknown) => {
       if (revision === siteRevision.current) setLoadError(getErrorTranslationKey(error));
-    } finally {
-      if (revision === siteRevision.current) {
-        reportLoading();
-        setSiteReady(true);
-      }
+    };
+    // 成员和 FAQ 各自补齐，任何一项失败都不阻塞头图与其他内容。
+    void requests.members.then(members => {
+      if (revision === siteRevision.current) setData(current => ({ ...current, members }));
+    }).catch(fail);
+    void requests.faqs.then(faqs => {
+      if (revision === siteRevision.current) setData(current => ({ ...current, faqs }));
+    }).catch(fail);
+    void requests.images.then(images => {
+      if (revision === siteRevision.current) setData(current => ({ ...current, images }));
+    }).catch(fail);
+    await preloadTownImage(`${env.VITE_API_URL}/api/site/hero?area=hero`);
+    if (revision === siteRevision.current) {
+      reportLoading();
+      setSiteReady(true);
     }
   }, [reportLoading]);
 
@@ -133,7 +136,7 @@ export function HomePage() {
     };
   }, [data.images]);
 
-  const kookUrl = safeExternalUrl(data.content.settings.kookUrl, { httpsOnly: true });
+  const kookUrl = safeExternalUrl(sharedContent.settings.kookUrl, { httpsOnly: true });
 
   if (!siteReady) {
     return <PageLoading label={t("app.loading.terrain")} />;
@@ -158,17 +161,16 @@ export function HomePage() {
       ) : null}
 
       <section className="hero page-hero" id="home">
-        {imagesByArea.hero ? (
-          <div className="page-hero-media">
-            <TownImageAsset
-              className="page-hero-image"
-              source={imagesByArea.hero.sourceUrl}
-              alt={localizedImageText(imagesByArea.hero, "alt", language)}
-              loading="eager"
-              fetchPriority="high"
-            />
-          </div>
-        ) : null}
+        <div className="page-hero-media">
+          <TownImageAsset
+            className="page-hero-image"
+            variant="hero"
+            source={imagesByArea.hero?.sourceUrl ?? `${env.VITE_API_URL}/api/site/hero?area=hero`}
+            alt={imagesByArea.hero ? localizedImageText(imagesByArea.hero, "alt", language) : t("home.hero.title")}
+            loading="eager"
+            fetchPriority="high"
+          />
+        </div>
         <div className="page-hero-shade" />
         <div className="hero-copy hero-copy-sequence">
           <StaggeredText as="span" className="eyebrow" language={language} startDelay={100} step={34} text={t("home.hero.eyebrow")} />
@@ -265,8 +267,8 @@ export function HomePage() {
           <p>{t("home.join.body")}</p>
           <div className="button-row join-actions">
             <CopyContactButton
-              value={data.content.settings.qqGroup}
-              label={t("home.join.qqGroup", { value: data.content.settings.qqGroup })}
+              value={sharedContent.settings.qqGroup}
+              label={t("home.join.qqGroup", { value: sharedContent.settings.qqGroup })}
               copiedLabel={t("home.join.copied")}
               failedLabel={t("home.join.copyFailed")}
             />

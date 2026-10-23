@@ -1,3 +1,4 @@
+// 仅供 QQ／论坛旧表退役前的历史维护窗口；当前数据库不适用，目录校验必须保持严格。
 import { open, readFile, rename } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { parseEnv } from "node:util";

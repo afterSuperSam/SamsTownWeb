@@ -3,24 +3,31 @@ import { TaskSemaphore } from "./taskQueue.js";
 import { accountPasswordSchema, usernameSchema } from "./authCredentials.js";
 import { createVisitorIdentity } from "./analyticsPrivacy.js";
 import { extractBvid, resolveBilibiliVideo } from "./bilibili.js";
+import sharp from "sharp";
+import { createDisplayImages, heroImageUrl } from "./siteImages.js";
 
-const mocks = vi.hoisted(() => ({ rpc: vi.fn(), getUser: vi.fn(), from: vi.fn(), updateUser: vi.fn(), signIn: vi.fn(), createUser: vi.fn() }));
+const mocks = vi.hoisted(() => ({ rpc: vi.fn(), getUser: vi.fn(), from: vi.fn(), storageFrom: vi.fn(), updateUser: vi.fn(), signIn: vi.fn(), createUser: vi.fn(), deleteUser: vi.fn() }));
 vi.mock("./config.js", () => ({ config: {
   SUPABASE_URL: "https://fixture.supabase.co", SUPABASE_SERVICE_ROLE_KEY: "fixture-service-role-key",
+  SUPABASE_REQUEST_TIMEOUT_MS: 25,
+  STORAGE_CLEANUP_RETRY_BASE_MS: 30_000, STORAGE_CLEANUP_RETRY_MAX_MS: 3_600_000,
   WEB_ORIGIN: "http://localhost:5173", API_TRUST_PROXY: "loopback", API_BODY_MAX_BYTES: 1_048_576,
   AUTH_LOGIN_RATE_MAX: 10, AUTH_PASSWORD_RATE_MAX: 5, AUTH_RATE_WINDOW_MS: 900_000,
   MAP_UPLOAD_MAX_BYTES: 52_428_800, MAP_UPLOAD_RATE_MAX: 3, BILIBILI_REQUEST_TIMEOUT_MS: 10_000,
+  SITE_IMAGE_MAX_BYTES: 52_428_800, SITE_IMAGE_MAX_PIXELS: 50_000_000, SITE_IMAGE_WEBP_QUALITY: 90,
+  SITE_IMAGE_SIZES: { hero: [1920, 1080], content: [1280, 720] }, SITE_HERO_CACHE_MS: 30_000, SITE_IMAGE_CACHE_SECONDS: 31_536_000,
   ANALYTICS_IP_PEPPER: "fixture-analytics-secret-at-least-32-characters",
   BLOG_API_URL: "https://blog.fixture.test/api/public/site-card.json", BLOG_REQUEST_TIMEOUT_MS: 5000,
   BLOG_RESPONSE_MAX_BYTES: 1_048_576, BLOG_CACHE_MS: 300_000, BLOG_HOME_POST_LIMIT: 3
 } }));
 vi.mock("@supabase/supabase-js", () => ({ createClient: () => ({ auth: { signInWithPassword: mocks.signIn } }) }));
-vi.mock("./supabaseAdmin.js", () => ({ supabaseAdmin: {
-  rpc: mocks.rpc, from: mocks.from, storage: { from: vi.fn() },
-  auth: { getUser: mocks.getUser, admin: { updateUserById: mocks.updateUser, getUserById: vi.fn(), createUser: mocks.createUser } }
+vi.mock("./supabaseAdmin.js", () => ({ supabaseFetch: vi.fn(), supabaseAdmin: {
+  rpc: mocks.rpc, from: mocks.from, storage: { from: mocks.storageFrom },
+  auth: { getUser: mocks.getUser, admin: { updateUserById: mocks.updateUser, getUserById: vi.fn(), createUser: mocks.createUser, deleteUser: mocks.deleteUser } }
 } }));
 const { buildApp } = await import("./app.js");
 const userId = "00000000-0000-4000-8000-000000000001";
+const sessionToken = (label = "token") => `${label}.${Buffer.from(JSON.stringify({ session_id: userId })).toString("base64url")}.signature`;
 let app: Awaited<ReturnType<typeof buildApp>>;
 function actor(role: string, mustChangePassword = false) {
   mocks.getUser.mockResolvedValue({ data: { user: { id: userId } }, error: null });
@@ -30,12 +37,74 @@ function actor(role: string, mustChangePassword = false) {
 }
 beforeEach(async () => {
   vi.resetAllMocks();
-  mocks.rpc.mockResolvedValue({ data: null, error: null });
+  mocks.rpc.mockImplementation(async (name: string) => ({ data: name === "is_current_auth_session" ? true : null, error: null }));
   app = await buildApp({ logger: false, startWorkers: false });
 });
 afterEach(async () => { await app.close(); vi.restoreAllMocks(); });
 
 describe("API behavior", () => {
+  it("creates sharp proportional 1080p and 720p WebP without altering the original", async () => {
+    const source = await sharp({ create: { width: 2560, height: 1440, channels: 3, background: "#d38d42" } }).png().toBuffer();
+    const before = Buffer.from(source);
+    const { versions } = await createDisplayImages(source);
+    expect(await sharp(versions["1080.webp"]).metadata()).toMatchObject({ width: 1920, height: 1080, format: "webp" });
+    expect(await sharp(versions["720.webp"]).metadata()).toMatchObject({ width: 1280, height: 720 });
+    expect(source.equals(before)).toBe(true);
+    expect(heroImageUrl("images/ingame/1.png")).toBe("images/optimized/ingame/1.1080.webp");
+    expect(heroImageUrl("/images/optimized/ingame/1.720.webp")).toBe("/images/optimized/ingame/1.1080.webp");
+  });
+  it.each([false, true])("stores original and both display sizes, cleaning up a rejected metadata write (%s)", async failMetadata => {
+    actor("owner");
+    const profileQuery = mocks.from.getMockImplementation()!;
+    const inserted = vi.fn();
+    const cleanup = vi.fn().mockResolvedValue({ error: null });
+    mocks.from.mockImplementation((table: string) => table === "town_images" ? {
+      insert: (row: object) => {
+        inserted(row);
+        return { select: () => ({ single: async () => failMetadata
+          ? { error: { code: "23514", message: "constraint violation" } }
+          : { data: row, error: null } }) };
+      }
+    } : table === "storage_cleanup_queue" ? { upsert: cleanup } : profileQuery(table));
+    const upload = vi.fn().mockResolvedValue({ error: null });
+    mocks.storageFrom.mockReturnValue({ upload, getPublicUrl: (path: string) => ({ data: { publicUrl: `https://fixture.supabase.co/${path}` } }) });
+    const source = await sharp({ create: { width: 32, height: 32, channels: 3, background: "#d38d42" } }).png().toBuffer();
+    const form = new FormData();
+    for (const [key, value] of Object.entries({ area: "hero", layout: "standard", captionZh: "", captionEn: "", altZh: "", altEn: "" })) form.set(key, value);
+    form.set("file", new Blob([new Uint8Array(source)], { type: "image/png" }), "test.png");
+    const encoded = new Response(form);
+    const response = await app.inject({ method: "POST", url: "/api/site/images",
+      headers: { authorization: `Bearer ${sessionToken()}`, "content-type": encoded.headers.get("content-type")! },
+      payload: Buffer.from(await encoded.arrayBuffer()) });
+    expect(response.statusCode, response.body).toBe(failMetadata ? 500 : 201);
+    expect(upload).toHaveBeenCalledTimes(3);
+    expect(upload.mock.calls[0][1].equals(source)).toBe(true);
+    expect(inserted).toHaveBeenCalledWith(expect.objectContaining({ created_by: userId, source_url: expect.stringMatching(/\.display\/1080\.webp$/) }));
+    if (failMetadata) expect(cleanup).toHaveBeenCalledWith(expect.objectContaining({ bucket_id: "site-images", object_path: upload.mock.calls[0][0] }), expect.anything());
+    else expect(cleanup).not.toHaveBeenCalled();
+  });
+  it("lets guests preload a visible hero, caches its URL, but rejects guest uploads", async () => {
+    const row = vi.fn().mockResolvedValue({ data: { source_url: "https://fixture.supabase.co/hero.png.display/720.webp" }, error: null });
+    const query = { eq: vi.fn(), order: vi.fn(), limit: vi.fn(), maybeSingle: row };
+    query.eq.mockReturnValue(query); query.order.mockReturnValue(query); query.limit.mockReturnValue(query);
+    mocks.from.mockReturnValue({ select: () => query });
+    const response = await app.inject("/api/site/hero?area=hero");
+    expect(response.statusCode).toBe(302);
+    expect(response.headers.location).toBe("https://fixture.supabase.co/hero.png.display/1080.webp");
+    expect(query.eq).toHaveBeenCalledWith("is_visible", true);
+    await app.inject("/api/site/hero?area=hero");
+    expect(row).toHaveBeenCalledTimes(1);
+    expect((await app.inject({ method: "POST", url: "/api/site/images" })).statusCode).toBe(401);
+  });
+  it("rejects a revoked session even when Auth still accepts its unexpired token", async () => {
+    actor("member", true);
+    mocks.rpc.mockResolvedValue({ data: false, error: null });
+    const response = await app.inject({ method: "POST", url: "/api/auth/change-password",
+      headers: { authorization: `Bearer ${sessionToken()}` },
+      payload: { password: "replacement-password", confirmation: "replacement-password" } });
+    expect(response.statusCode).toBe(401);
+    expect(mocks.updateUser).not.toHaveBeenCalled();
+  });
   it("returns only the latest three distinct blog articles and caches them", async () => {
     const article = (day: number, url = `https://blog.fixture.test/articles/${day}`) => ({
       title: `Article ${day}`, url, coverUrl: "javascript:alert(1)", description: "Plain text <script> is not HTML",
@@ -106,24 +175,24 @@ describe("API behavior", () => {
   it("enforces authentication, Owner authority and map administration", async () => {
     expect((await app.inject("/api/accounts")).statusCode).toBe(401);
     actor("member");
-    expect((await app.inject({ url: "/api/accounts", headers: { authorization: "Bearer token" } })).statusCode).toBe(403);
-    expect((await app.inject({ method: "POST", url: "/api/maps", headers: { authorization: "Bearer token" } })).statusCode).toBe(403);
+    expect((await app.inject({ url: "/api/accounts", headers: { authorization: `Bearer ${sessionToken()}` } })).statusCode).toBe(403);
+    expect((await app.inject({ method: "POST", url: "/api/maps", headers: { authorization: `Bearer ${sessionToken()}` } })).statusCode).toBe(403);
     expect((await app.inject({ url: "/api/accounts", headers: { authorization: "token" } })).statusCode).toBe(401);
-    expect(mocks.rpc).not.toHaveBeenCalled();
+    expect(mocks.rpc.mock.calls.every(([name]) => name === "is_current_auth_session")).toBe(true);
   });
   it("treats legacy non-owner roles as members and rejects retired role assignments", async () => {
     for (const role of ["admin", "viewer"]) {
       actor(role);
-      expect((await app.inject({ url: "/api/accounts", headers: { authorization: "Bearer token" } })).statusCode).toBe(403);
-      expect((await app.inject({ method: "POST", url: "/api/maps", headers: { authorization: "Bearer token" } })).statusCode).toBe(403);
+      expect((await app.inject({ url: "/api/accounts", headers: { authorization: `Bearer ${sessionToken()}` } })).statusCode).toBe(403);
+      expect((await app.inject({ method: "POST", url: "/api/maps", headers: { authorization: `Bearer ${sessionToken()}` } })).statusCode).toBe(403);
       actor("owner");
-      expect((await app.inject({ method: "POST", url: "/api/accounts", headers: { authorization: "Bearer token" },
+      expect((await app.inject({ method: "POST", url: "/api/accounts", headers: { authorization: `Bearer ${sessionToken()}` },
         payload: { username: "NewMember", password: "temporary-password", role } })).statusCode).toBe(400);
     }
   });
   it("keeps temporary-password accounts gated until password replacement succeeds", async () => {
     actor("owner", true);
-    const headers = { authorization: "Bearer token" };
+    const headers = { authorization: `Bearer ${sessionToken()}` };
     expect((await app.inject({ url: "/api/accounts", headers })).json()).toEqual({ code: "error.passwordChangeRequired" });
     const clearGate = vi.fn().mockResolvedValue({ error: null });
     const base = mocks.from.getMockImplementation()!;
@@ -147,8 +216,8 @@ describe("API behavior", () => {
     };
     const ownerAuthenticated = Promise.withResolvers<void>();
     mocks.getUser.mockImplementation(async (token: string) => {
-      if (token === "owner") ownerAuthenticated.resolve();
-      return { data: { user: { id: token === "owner" ? userId : memberId } }, error: null };
+      if (token === sessionToken("owner")) ownerAuthenticated.resolve();
+      return { data: { user: { id: token === sessionToken("owner") ? userId : memberId } }, error: null };
     });
     mocks.from.mockImplementation(() => ({
       select: () => ({ eq: (_column: string, id: string) => ({ single: async () => ({ data: { ...profiles[id] }, error: null }) }) }),
@@ -162,10 +231,10 @@ describe("API behavior", () => {
     const sessionStarted = Promise.withResolvers<void>();
     const issueSession = Promise.withResolvers<{ data: { session: { access_token: string; refresh_token: string } }; error: null }>();
     mocks.signIn.mockImplementation(() => { sessionStarted.resolve(); return issueSession.promise; });
-    const change = app.inject({ method: "POST", url: "/api/auth/change-password", headers: { authorization: "Bearer member" },
+    const change = app.inject({ method: "POST", url: "/api/auth/change-password", headers: { authorization: `Bearer ${sessionToken("member")}` },
       payload: { password: "replacement-password", confirmation: "replacement-password" } }).then(response => response);
     await sessionStarted.promise;
-    const reset = app.inject({ method: "PATCH", url: `/api/accounts/${memberId}`, headers: { authorization: "Bearer owner" },
+    const reset = app.inject({ method: "PATCH", url: `/api/accounts/${memberId}`, headers: { authorization: `Bearer ${sessionToken("owner")}` },
       payload: { temporaryPassword: "temporary-password" } }).then(response => response);
     await ownerAuthenticated.promise;
     await new Promise(resolve => setImmediate(resolve));
@@ -187,7 +256,7 @@ describe("API behavior", () => {
       return { data: { user: { id: userId } }, error: null };
     });
     const pending = app.inject({ method: "PATCH", url: "/api/accounts/00000000-0000-4000-8000-000000000002",
-      headers: { authorization: "Bearer token" }, payload: { role: "member" } }).then(response => response);
+      headers: { authorization: `Bearer ${sessionToken()}` }, payload: { role: "member" } }).then(response => response);
     await authenticated.promise;
     await new Promise(resolve => setImmediate(resolve));
     actor("owner", true);
@@ -196,12 +265,64 @@ describe("API behavior", () => {
     expect((await pending).json()).toEqual({ code: "error.passwordChangeRequired" });
     expect(mocks.updateUser).not.toHaveBeenCalled();
   });
+  it.each(["POST", "PUT"] as const)("rechecks authorization before a queued %s map upload reads its file", async method => {
+    actor("owner");
+    const staged = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const pipeline = await import("./maps/mapTilePipeline.js");
+    const stage = vi.spyOn(pipeline, "stageMapUpload").mockImplementation(async () => {
+      staged.resolve();
+      await release.promise;
+      throw new Error("Fixture upload ended");
+    });
+    const headers = { authorization: `Bearer ${sessionToken()}`, "content-type": "multipart/form-data; boundary=fixture" };
+    const payload = '--fixture\r\nContent-Disposition: form-data; name="image"; filename="map.png"\r\nContent-Type: image/png\r\n\r\nimage\r\n--fixture--\r\n';
+    const first = app.inject({ method: "POST", url: "/api/maps", headers, payload }).then(response => response);
+    await staged.promise;
+    const queued = Promise.withResolvers<void>();
+    mocks.getUser.mockImplementation(async () => { queued.resolve(); return { data: { user: { id: userId } }, error: null }; });
+    const second = app.inject({ method, url: method === "POST" ? "/api/maps" : `/api/maps/${userId}/image`, headers, payload }).then(response => response);
+    await queued.promise;
+    await new Promise(resolve => setImmediate(resolve));
+    actor("owner", true);
+    release.resolve();
+    expect((await first).statusCode).toBe(500);
+    expect((await second).json()).toEqual({ code: "error.passwordChangeRequired" });
+    expect(stage).toHaveBeenCalledOnce();
+  });
+  it.each([false, true])("reports whether Auth deletion remains queued: %s", async pending => {
+    actor("owner");
+    const authRead = mocks.from.getMockImplementation()!;
+    mocks.from.mockImplementation((table: string) => table === "profiles" ? authRead() : {
+      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: pending ? { status: "pending" } : null, error: null }) }) })
+    });
+    const response = await app.inject({ method: "DELETE", url: "/api/accounts/00000000-0000-4000-8000-000000000002",
+      headers: { authorization: `Bearer ${sessionToken()}` } });
+    expect(response.statusCode).toBe(pending ? 202 : 200);
+    expect(response.json()).toEqual({ ok: true, pending });
+  });
+  it.each([400, 0, 503])("does not reactivate old sessions after an ambiguous password reset: HTTP %s", async status => {
+    actor("owner");
+    const authRead = mocks.from.getMockImplementation()!;
+    const target = { role: "member", must_change_password: false, sessions_valid_after: "-infinity" };
+    mocks.from.mockImplementation(() => ({
+      select: (columns: string) => columns === "role,must_change_password" ? authRead().select()
+        : { eq: () => ({ single: async () => ({ data: { ...target }, error: null }) }) },
+      update: (values: object) => ({ eq: async () => { Object.assign(target, values); return { error: null }; } })
+    }));
+    mocks.updateUser.mockResolvedValue({ error: { status, message: "Auth response unavailable" } });
+    const response = await app.inject({ method: "PATCH", url: "/api/accounts/00000000-0000-4000-8000-000000000002",
+      headers: { authorization: `Bearer ${sessionToken()}` }, payload: { temporaryPassword: "temporary-password" } });
+    expect(response.statusCode).toBe(400);
+    expect(target.must_change_password).toBe(status !== 400);
+    expect(target.sessions_valid_after === "-infinity").toBe(status === 400);
+  });
   it("returns account data without QQ fields and hides internal failures", async () => {
     actor("owner");
     const authRead = mocks.from.getMockImplementation()!;
     mocks.from.mockImplementation(() => ({ select: (columns: string) => columns === "role,must_change_password"
       ? authRead().select() : { order: async () => ({ data: [{ id: userId, username: "Owner", role: "owner", must_change_password: false, created_at: "fixture" }], error: null }) } }));
-    const response = await app.inject({ url: "/api/accounts", headers: { authorization: "Bearer token" } });
+    const response = await app.inject({ url: "/api/accounts", headers: { authorization: `Bearer ${sessionToken()}` } });
     expect(response.json()).toEqual([{ id: userId, username: "Owner", role: "owner", mustChangePassword: false, createdAt: "fixture" }]);
     mocks.rpc.mockRejectedValueOnce(new Error("private database details"));
     const failed = await app.inject({ method: "POST", url: "/api/auth/sign-in", payload: { username: "Member", password: "invalid" } });
@@ -211,6 +332,26 @@ describe("API behavior", () => {
 });
 
 describe("security and concurrency", () => {
+  it("aborts a stalled Supabase request instead of holding the account queue indefinitely", async () => {
+    const { supabaseFetch } = await vi.importActual<typeof import("./supabaseAdmin.js")>("./supabaseAdmin.js");
+    vi.spyOn(globalThis, "fetch").mockImplementation((_input, options) => new Promise((_resolve, reject) => {
+      options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), { once: true });
+    }));
+    await expect(supabaseFetch("https://fixture.supabase.co/rest/v1/profiles")).rejects.toMatchObject({ name: "TimeoutError" });
+  });
+  it.each([false, true])("transfers Storage ownership before Auth deletion; failed transfer=%s", async failed => {
+    const { processAccountCleanup } = await import("./accountCleanup.js");
+    mocks.rpc.mockImplementation(async (name: string) => name === "claim_account_deletion_batch"
+      ? { data: [{ user_id: userId, attempts: 0 }], error: null }
+      : { error: failed ? new Error("Storage transfer unavailable") : null });
+    mocks.from.mockReturnValue({ delete: () => ({ eq: async () => ({ error: null }) }),
+      update: () => ({ eq: async () => ({ error: null }) }) });
+    mocks.deleteUser.mockResolvedValue({ error: null });
+    await processAccountCleanup(app);
+    expect(mocks.rpc).toHaveBeenCalledWith("transfer_account_storage", { p_user_id: userId });
+    expect(mocks.deleteUser).toHaveBeenCalledTimes(failed ? 0 : 1);
+    if (!failed) expect(mocks.rpc.mock.invocationCallOrder[1]).toBeLessThan(mocks.deleteUser.mock.invocationCallOrder[0]);
+  });
   it("does not reserve a renamed account's previous username in Auth", async () => {
     const { createInternalAuthUser } = await import("./accountProvisioning.js");
     mocks.createUser.mockResolvedValue({ data: { user: { id: userId } }, error: null });

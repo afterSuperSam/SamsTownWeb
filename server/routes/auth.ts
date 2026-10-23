@@ -4,7 +4,7 @@ import { z } from "zod";
 import { accountMutations, requirePasswordChangeSession } from "../auth.js";
 import { accountPasswordSchema, loginSchema, normalizeUsername } from "../authCredentials.js";
 import { config } from "../config.js";
-import { supabaseAdmin } from "../supabaseAdmin.js";
+import { supabaseAdmin, supabaseFetch } from "../supabaseAdmin.js";
 
 const passwordChangeSchema = z.object({
   password: accountPasswordSchema,
@@ -14,6 +14,7 @@ const passwordChangeSchema = z.object({
 // 独立客户端只负责签发用户会话，不替换共享服务端的管理员授权。
 async function passwordSession(email: string, password: string) {
   const client = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY, {
+    global: { fetch: supabaseFetch },
     auth: { autoRefreshToken: false, persistSession: false }
   });
   return client.auth.signInWithPassword({ email, password });

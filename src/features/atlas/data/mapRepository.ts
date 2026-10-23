@@ -19,7 +19,7 @@ type MapRow = Tables<"town_maps">;
 type ProjectRow = Tables<"map_claims">;
 
 type MapFunctions = Database["public"]["Functions"];
-type MapRpcName = Extract<keyof MapFunctions, "get_map_claim_detail" | "list_map_claim_summaries">;
+type MapRpcName = Extract<keyof MapFunctions, "get_map_claim_detail" | "list_map_claim_summaries" | "get_map_snapshot">;
 
 // RPC 签名来自 Database；JSON 在唯一边界解析后交给现有 mapper。
 const coordinateSchema = z.object({ column: z.number().int().nonnegative(), row: z.number().int().nonnegative() });
@@ -35,6 +35,7 @@ const projectRowSchema = z.object({
   created_at: z.string(), updated_at: z.string()
 });
 const projectDetailSchema = projectRowSchema.extend({ cells: cellsSchema });
+const mapSnapshotSchema = z.object({ projects: z.array(projectDetailSchema) });
 const projectSummarySchema = projectRowSchema.extend({ cellCount: z.number().int().nonnegative(), bounds: boundsSchema.nullable() });
 const projectListSchema = z.object({
   total: z.number().int().nonnegative(), items: z.array(projectSummarySchema).max(atlasConfig.listPageSize)
@@ -67,22 +68,11 @@ export async function getProjectDetail(mapId: string, projectId: string): Promis
   return projectFromRow(row, row.cells);
 }
 
-// 分页读取项目格子，全图显示真实边界。
+// 同一数据库快照读取全部边界，避免分页期间增删项目造成漏格或混合版本。
 export async function getMapSnapshot(mapId: string): Promise<MapSnapshot> {
-  const [rows, cells] = await Promise.all([
-    collectPages<ProjectRow>(async (from, to) => supabase.from("map_claims").select("*")
-      .eq("map_id", mapId).order("id").range(from, to)),
-    collectPages<Pick<Tables<"map_claim_cells">, "claim_id" | "chunk_column" | "chunk_row">>(async (from, to) =>
-      supabase.from("map_claim_cells").select("claim_id,chunk_column,chunk_row")
-        .eq("map_id", mapId).order("chunk_row").order("chunk_column").range(from, to))
-  ]);
-  const projects = new Map(rows.map(row => [row.id, projectFromRow(row)]));
-  for (const cell of cells) {
-    const project = projects.get(cell.claim_id);
-    if (!project) throw new Error("error.mapDataChanged");
-    project.cells.push({ column: cell.chunk_column, row: cell.chunk_row });
-  }
-  return { projects: [...projects.values()] };
+  const snapshot = await requestMapJson("get_map_snapshot", { p_map_id: mapId }, mapSnapshotSchema, "error.mapDetailIncomplete");
+  if (snapshot.projects.some(project => project.map_id !== mapId)) throw new Error("error.mapDetailIncomplete");
+  return { projects: snapshot.projects.map(project => projectFromRow(project, project.cells)) };
 }
 
 export async function listMapProjects(mapId: string, pageIndex: number): Promise<MapListPage> {

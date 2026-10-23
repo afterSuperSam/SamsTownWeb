@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { Profile } from "../domain/types";
 import { getCurrentProfile } from "../services/authService";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
+import { env } from "../lib/env";
 
 interface AuthState {
   user: User | null;
@@ -26,7 +27,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Keep the session and permission profile in one loading boundary so route
   // guards never evaluate a newly signed-in user against a stale/null profile.
-  const synchronizeSession = useCallback(async (session: Session | null): Promise<Profile | null> => {
+  const synchronizeSession = useCallback(async (session: Session | null, allowLoading = true): Promise<Profile | null> => {
     const revision = ++syncRevision.current;
     if (!session) {
       if (mounted.current) {
@@ -39,7 +40,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return null;
     }
 
-    const blocksRoute = settledUserId.current !== session.user.id || !hasSettledProfile.current;
+    const needsProfile = settledUserId.current !== session.user.id || !hasSettledProfile.current;
+    const blocksRoute = needsProfile && allowLoading;
     if (mounted.current && blocksRoute) setLoading(true);
     try {
       const nextProfile = await getCurrentProfile(session.user.id);
@@ -51,7 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return nextProfile;
     } catch (error) {
       if (!mounted.current || revision !== syncRevision.current) throw error;
-      if (blocksRoute) {
+      if (needsProfile) {
         settledUserId.current = session.user.id;
         hasSettledProfile.current = false;
         setUser(session.user);
@@ -80,15 +82,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    // SDK 会话恢复可能等待刷新重试；截止后放行公开内容，权限仍由空资料拒绝。
+    let initialExpired = false;
+    const initialDeadline = window.setTimeout(() => {
+      initialExpired = true;
+      setLoading(false);
+    }, env.VITE_API_TIMEOUT_MS);
     // INITIAL_SESSION 负责首次恢复，避免与主动 getSession 重复查询资料。
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       queueMicrotask(() => {
-        void synchronizeSession(session).catch(() => undefined);
+        void synchronizeSession(session, event !== "INITIAL_SESSION" || !initialExpired)
+          .catch(() => undefined).finally(() => window.clearTimeout(initialDeadline));
       });
     });
     return () => {
       mounted.current = false;
       syncRevision.current += 1;
+      window.clearTimeout(initialDeadline);
       listener.subscription.unsubscribe();
     };
   }, [synchronizeSession]);

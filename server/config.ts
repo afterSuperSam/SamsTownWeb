@@ -4,6 +4,7 @@ import { z } from "zod";
 export const config = z.object({
   SUPABASE_URL: z.string().url(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(20),
+  SUPABASE_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(15_000),
   API_HOST: z.string().default("127.0.0.1"),
   API_PORT: z.coerce.number().int().positive().default(8787),
   // `true` remains accepted for existing deployments, but is narrowed to the
@@ -20,7 +21,7 @@ export const config = z.object({
       return false;
     }
   }, "WEB_ORIGIN must be an http(s) origin without credentials or a path")
-    .transform(value => new URL(value).origin).default("http://localhost:5173"),
+    .transform(value => new URL(value).origin).default("http://127.0.0.1:5173"),
   STORAGE_CLEANUP_INTERVAL_MS: z.coerce.number().int().min(30_000).default(300_000),
   STORAGE_CLEANUP_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(100).default(8),
   STORAGE_CLEANUP_BATCH_SIZE: z.coerce.number().int().min(1).max(50).default(50),
@@ -32,11 +33,18 @@ export const config = z.object({
   AUTH_PASSWORD_RATE_MAX: z.coerce.number().int().positive().default(5),
   MAP_UPLOAD_MAX_BYTES: z.coerce.number().int().positive().default(52_428_800),
   MAP_UPLOAD_RATE_MAX: z.coerce.number().int().positive().default(3),
+  SITE_IMAGE_MAX_BYTES: z.coerce.number().int().positive().default(52_428_800),
+  SITE_IMAGE_MAX_PIXELS: z.coerce.number().int().positive().default(50_000_000),
+  SITE_IMAGE_WEBP_QUALITY: z.coerce.number().int().min(75).max(100).default(90),
+  SITE_IMAGE_CACHE_SECONDS: z.coerce.number().int().positive().default(31_536_000),
+  SITE_HERO_CACHE_MS: z.coerce.number().int().positive().default(30_000),
+  SITE_IMAGE_SIZES: z.object({ hero: z.tuple([z.number().positive(), z.number().positive()]), content: z.tuple([z.number().positive(), z.number().positive()]) })
+    .default({ hero: [1920, 1080], content: [1280, 720] }),
   BILIBILI_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
   BLOG_API_URL: z.string().url().refine(value => {
     const url = new URL(value);
     return url.protocol === "https:" && !url.username && !url.password;
-  }, "BLOG_API_URL must be an HTTPS URL without credentials").default("https://blog.yingwutown.top/api/public/site-card.json"),
+  }, "BLOG_API_URL must be an HTTPS URL without credentials").default("https://blog.moesam.com/api/public/site-card.json"),
   BLOG_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
   BLOG_RESPONSE_MAX_BYTES: z.coerce.number().int().positive().default(1_048_576),
   BLOG_CACHE_MS: z.coerce.number().int().min(1_000).default(300_000),

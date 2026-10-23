@@ -111,9 +111,9 @@ export function AccountsPanel({ currentUserId, onNotice }: AccountsPanelProps) {
     if (!pendingDelete) return;
     setBusyId(pendingDelete.id);
     try {
-      await deleteAccount(pendingDelete.id);
+      const result = await deleteAccount(pendingDelete.id);
       setPendingDelete(null);
-      if (await refresh()) onNotice(t("admin.saved"));
+      if (await refresh()) onNotice(t(result.pending ? "admin.accounts.deletePending" : "admin.saved"));
     } catch (error) {
       onNotice(t(getErrorTranslationKey(error)), "error");
     } finally {

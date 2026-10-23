@@ -2,7 +2,7 @@ import multipart from "@fastify/multipart";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { config } from "../config.js";
-import { requireMapManager } from "../auth.js";
+import { requireOwner } from "../auth.js";
 import {
   createTownMap,
   deleteTownMap,
@@ -29,10 +29,12 @@ export async function mapRoutes(app: FastifyInstance) {
   });
 
   app.post("/api/maps", {
-    preHandler: requireMapManager,
+    preHandler: requireOwner,
     config: { rateLimit: { max: config.MAP_UPLOAD_RATE_MAX, timeWindow: config.AUTH_RATE_WINDOW_MS } }
   }, async (request, reply) => {
     return mapUploads.run(async () => {
+      await requireOwner(request, reply);
+      if (reply.sent) return;
       const parsed = await parseMapMultipart(request);
       let fields: MapFields;
       try {
@@ -52,26 +54,28 @@ export async function mapRoutes(app: FastifyInstance) {
     });
   });
 
-  app.patch("/api/maps/:id", { preHandler: requireMapManager }, async request => {
+  app.patch("/api/maps/:id", { preHandler: requireOwner }, async request => {
     const id = idSchema.parse((request.params as { id: string }).id);
     return updateTownMap(id, mapFieldsSchema.parse(request.body));
   });
 
   app.put("/api/maps/:id/image", {
-    preHandler: requireMapManager,
+    preHandler: requireOwner,
     config: { rateLimit: { max: config.MAP_UPLOAD_RATE_MAX, timeWindow: config.AUTH_RATE_WINDOW_MS } }
-  }, async request => {
+  }, async (request, reply) => {
     return mapUploads.run(async () => {
+      await requireOwner(request, reply);
+      if (reply.sent) return;
       const id = idSchema.parse((request.params as { id: string }).id);
       const parsed = await parseMapMultipart(request);
-      return replaceTownMapImage(id, parsed.image, parsed.fields.clearExisting === "true", request.log);
+      return replaceTownMapImage(id, parsed.image, parsed.fields.clearExisting === "true", request.actor!.id, request.log);
     });
   });
 
-  app.delete("/api/maps/:id", { preHandler: requireMapManager }, async request => {
+  app.delete("/api/maps/:id", { preHandler: requireOwner }, async request => {
     const id = idSchema.parse((request.params as { id: string }).id);
     const body = z.object({ confirmName: z.string() }).parse(request.body);
-    return deleteTownMap(id, body.confirmName, request.log);
+    return deleteTownMap(id, body.confirmName, request.actor!.id);
   });
 }
 

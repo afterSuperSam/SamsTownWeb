@@ -89,7 +89,7 @@ export async function accountRoutes(app: FastifyInstance) {
     if (reply.sent) return;
     const id = z.string().uuid().parse((request.params as { id: string }).id);
     const values = updateSchema.parse(request.body);
-    const target = await supabaseAdmin.from("profiles").select("role,must_change_password").eq("id", id).single();
+    const target = await supabaseAdmin.from("profiles").select("role,must_change_password,sessions_valid_after").eq("id", id).single();
     if (target.error) {
       if (target.error.code === "PGRST116") return reply.code(404).send({ code: "error.accountMissing" });
       throw target.error;
@@ -100,7 +100,7 @@ export async function accountRoutes(app: FastifyInstance) {
 
     const profileValues = {
       ...(values.role ? { role: values.role } : {}),
-      ...(values.temporaryPassword ? { must_change_password: true } : {})
+      ...(values.temporaryPassword ? { must_change_password: true, sessions_valid_after: new Date().toISOString() } : {})
     };
     const { error } = await supabaseAdmin.from("profiles").update(profileValues).eq("id", id);
     if (error) throw error;
@@ -109,11 +109,18 @@ export async function accountRoutes(app: FastifyInstance) {
         password: values.temporaryPassword
       });
       if (passwordResult.error) {
-        const rollback = await supabaseAdmin.from("profiles").update({
-          role: target.data.role,
-          must_change_password: target.data.must_change_password
-        }).eq("id", id);
-        if (rollback.error) app.log.error({ err: rollback.error, userId: id }, "Account update rollback failed");
+        // 超时或服务错误不能证明改密失败，保留门禁，避免重新放行可能已被撤销的旧会话。
+        const status = passwordResult.error.status ?? 0;
+        if (status >= 400 && status < 500 && status !== 408) {
+          const rollback = await supabaseAdmin.from("profiles").update({
+            role: target.data.role,
+            must_change_password: target.data.must_change_password,
+            sessions_valid_after: target.data.sessions_valid_after
+          }).eq("id", id);
+          if (rollback.error) app.log.error({ err: rollback.error, userId: id }, "Account update rollback failed");
+        } else {
+          app.log.error({ err: passwordResult.error, userId: id }, "Password reset outcome unknown; old sessions remain blocked");
+        }
         return reply.code(400).send({ code: "error.accountUpdate" });
       }
     }
@@ -125,10 +132,10 @@ export async function accountRoutes(app: FastifyInstance) {
   }));
 
   app.delete("/api/accounts/:id", { preHandler: requireOwner }, async (request, reply) => {
+    const id = z.string().uuid().parse((request.params as { id: string }).id);
     await accountMutations.run(async () => {
       await requireOwner(request, reply);
       if (reply.sent) return;
-      const id = z.string().uuid().parse((request.params as { id: string }).id);
       if (id === request.actor!.id) return reply.code(409).send({ code: "error.accountSelfDelete" });
       const prepared = await supabaseAdmin.rpc("prepare_account_deletion", {
         p_actor_id: request.actor!.id,
@@ -142,6 +149,8 @@ export async function accountRoutes(app: FastifyInstance) {
     });
     if (reply.sent) return;
     await processAccountCleanup(app);
-    return { ok: true };
+    const queued = await supabaseAdmin.from("account_deletion_queue").select("status").eq("user_id", id).maybeSingle();
+    if (queued.error) throw queued.error;
+    return reply.code(queued.data ? 202 : 200).send({ ok: true, pending: Boolean(queued.data) });
   });
 }

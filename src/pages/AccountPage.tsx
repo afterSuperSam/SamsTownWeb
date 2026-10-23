@@ -58,6 +58,18 @@ export function AccountPage() {
   }
 
 
+  async function logout() {
+    setBusy(true);
+    setErrorKey(null);
+    try {
+      await signOut();
+    } catch (error) {
+      setErrorKey(getErrorTranslationKey(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (loading) return <PageLoading label={t("app.loading.terrain")} />;
   if (!user) return (
     <main className="page narrow-page auth-entry-page">
@@ -83,7 +95,8 @@ export function AccountPage() {
         <div className="eyebrow"><UserRound size={16} />{t("account.eyebrow")}</div>
         <h1>{t("account.title")}</h1>
         <p>{t("account.body", { username: profile?.username ?? "" })}</p>
-        <Button type="button" className="secondary small" onClick={() => void signOut()}><LogOut size={16} />{t("auth.signOut")}</Button>
+        <Button type="button" className="secondary small" disabled={busy} onClick={() => void logout()}><LogOut size={16} />{t("auth.signOut")}</Button>
+        {errorKey ? <Notice>{t(errorKey)}</Notice> : null}
       </header>
       <section className="account-identity" aria-label={t("account.player.title")}>
         <div className="account-identity-avatar">

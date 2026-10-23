@@ -201,7 +201,7 @@
   .drift-wall__cycle { display:contents; }
   .drift-wall__figure { display:contents; }
   .drift-wall__cycle[aria-hidden="true"] { display:none; }
-  .drift-wall__tile { width:auto; transform:none!important; }
+  .drift-wall__tile { width:100%; margin:0; transform:none!important; }
 }
 
 @media (max-width:640px) and (prefers-reduced-motion:reduce) {

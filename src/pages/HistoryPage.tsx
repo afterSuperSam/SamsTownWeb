@@ -121,7 +121,7 @@ export function HistoryPage() {
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
-    const query = window.matchMedia("(max-width: 780px)");
+    const query = window.matchMedia("(max-width: 720px)");
     const updateColumns = () => setGalleryColumns(query.matches ? 2 : 3);
     updateColumns();
     query.addEventListener?.("change", updateColumns);
@@ -186,6 +186,7 @@ export function HistoryPage() {
             <TownImage
               className="history-hero-image page-hero-image"
               source={heroImage.sourceUrl}
+              variant="hero"
               alt={language === "zh-CN" ? heroImage.altZh : heroImage.altEn}
               loading="eager"
               fetchPriority="high"

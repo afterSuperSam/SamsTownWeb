@@ -22,29 +22,12 @@ const claimRow = {
 const cells = Array.from({ length: 2305 }, (_, column) => ({ column, row: 0 }));
 const bounds = { minColumn: 0, minRow: 0, maxColumn: 3000, maxRow: 0 };
 
-function mockTables(tables: Record<string, unknown[]>) {
-  const readPage = vi.fn(async (table: string, from: number, to: number) => ({
-    data: tables[table].slice(from, to + 1), error: null
-  }));
-  vi.mocked(supabase.from).mockImplementation((table: string) => {
-    const query = {
-      select: () => query, eq: () => query, order: () => query,
-      range: (from: number, to: number) => readPage(table, from, to)
-    };
-    return query as never;
-  });
-  return readPage;
-}
-
 describe("complete map reads", () => {
   it("loads all claimed cells beyond 1000 while preserving real geometry and colour", async () => {
-    const readPage = mockTables({
-      map_claims: [claimRow],
-      map_claim_cells: cells.map(cell => ({ claim_id: claimRow.id, chunk_column: cell.column, chunk_row: cell.row }))
-    });
+    vi.mocked(supabase.rpc).mockReset().mockResolvedValueOnce({ data: { projects: [{ ...claimRow, cells }] }, error: null } as never);
     const snapshot = await getMapSnapshot("map-1");
     expect(snapshot.projects[0]).toMatchObject({ color: claimRow.color, cells });
-    expect(readPage.mock.calls.filter(([table]) => table === "map_claim_cells")).toHaveLength(3);
+    expect(supabase.rpc).toHaveBeenCalledExactlyOnceWith("get_map_snapshot", { p_map_id: "map-1" });
   });
 
   it("keeps full detail separate from list geometry and exposes database totals", async () => {
@@ -60,9 +43,11 @@ describe("complete map reads", () => {
     expect((await getProjectDetail("map-1", "claim-1")).cells).toEqual(cells);
   });
 
-  it("rejects cells whose claim disappeared during pagination", async () => {
-    mockTables({ map_claims: [], map_claim_cells: [{ claim_id: claimRow.id, chunk_column: 0, chunk_row: 0 }] });
-    await expect(getMapSnapshot("map-1")).rejects.toThrow("error.mapDataChanged");
+  it("rejects a snapshot containing another map's project", async () => {
+    vi.mocked(supabase.rpc).mockReset().mockResolvedValueOnce({
+      data: { projects: [{ ...claimRow, map_id: "other-map", cells }] }, error: null
+    } as never);
+    await expect(getMapSnapshot("map-1")).rejects.toThrow("error.mapDetailIncomplete");
   });
 
   it("saves the project contract without a status field", async () => {

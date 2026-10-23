@@ -2,7 +2,7 @@
 
 Minecraft 社区展示网站：小镇介绍、成员档案、历史、建筑项目地图与博客文章告知。
 
-[网站](https://yingwutown.top) · [SamsBlog](https://blog.yingwutown.top) · [源码](https://github.com/afterSuperSam/SamsTownWeb)
+[网站](https://moesam.com) · [SamsBlog](https://blog.moesam.com) · [源码](https://github.com/afterSuperSam/SamsTownWeb)
 
 ## 架构
 
@@ -14,7 +14,11 @@ React + TypeScript + Vite，Fastify 提供认证与管理 API，Supabase 提供 
 
 后台成员支持按游戏 ID 与分类组合筛选，筛选时暂停排序，保存保留完整成员集合。文案编辑直接使用当前译文目录，废弃文案从目录删除，旧覆盖键在读取时过滤，不维护额外黑名单；个人资料只修改用户名与密码，不提供内部邮箱编辑。地图后台刷新保留现有画布与项目列表，切换身份、地图或页码时隔离列表，底图版本变化时重建画布。
 
-页面与首屏加载共用暖棕纸纹背景，深浅模式分别配置颗粒、纤维强度；首页、档案与地图 Hero 共用 `--hero-mask` 柔边椭圆遮罩，其余图片与视频背景沿水平线柔化。首页和档案共用章节导航，浅色模式使用亮金色光晕；天数区采用 76–128px Georgia 粗体衬线数字，无额外装饰，字体与颜色由 `--counter-font`、`--counter-ink` 管理，页脚版本号保留 SamsBlog 的系统手写字体。首页照片墙在刷新时随机排列，同一次访问内保持稳定；页脚复用 SuperSam 笔迹，浅色悬浮为亮金光晕，底部保持紧凑并避让手机目录按钮。视觉参数集中在 `src/domain/visualConfig.ts`，主题变量在 `src/styles/global.css`。
+成员、历史、FAQ 由同一 repository 完整读取并校验保存版本，避免截断或覆盖他人修改；媒体写入复用后台忙碌状态。首屏文案或会话恢复超时后放行公开页面，文案可重试，未验证的账号仍无管理权限。照片墙离屏暂停，减少动态效果时显示静态网格。
+
+图片保留原件，展示统一为高质量 WebP：头图不超过 1920×1080，其他不超过 1280×720，等比缩小、不裁切、不放大。后台上传由现有 Sharp 生成两档，删除时一并清理展示版本。独立的小脚本提前请求头图；首页成员、FAQ、媒体列表异步补齐，不再共同阻塞首屏，公开页面不等待登录恢复。版本 v2.2.2 无新增数据库迁移，但需要同时更新 Fastify 与前端。
+
+页面与首屏加载共用暖棕纸纹背景，深浅模式分别配置颗粒、纤维强度；首页与档案 Hero 共用 `--hero-mask` 柔边椭圆遮罩，其余图片与视频背景沿水平线柔化。首页和档案共用章节导航，浅色模式使用亮金色光晕；天数区采用 76–128px Georgia 粗体衬线数字，无额外装饰，字体与颜色由 `--counter-font`、`--counter-ink` 管理，页脚版本号保留 SamsBlog 的系统手写字体。首页照片墙在刷新时随机排列，同一次访问内保持稳定；页脚复用 SuperSam 笔迹，浅色悬浮为亮金光晕，底部保持紧凑并避让手机目录按钮。视觉参数集中在 `src/domain/visualConfig.ts`，主题变量在 `src/styles/global.css`。
 
 顶部操作仅保留无底框图标。主题与语言按钮共用颜色、悬停发光、缩放及焦点样式，不单独覆盖主题按钮颜色。点击主题图标时，新主题从点击位置以柔边圆形扩散；键盘操作、减少动效或不支持视图过渡的浏览器直接切换。时长和柔边宽度由 `visualConfig.themeRipple` 配置。
 
@@ -39,7 +43,7 @@ Copy-Item .env.example .env
 pnpm dev
 ```
 
-前端 `http://localhost:5173`，API `http://localhost:8787`。只预览公共界面可运行 `pnpm dev:web`；未配置 Supabase 时业务列表为空。Fastify 同步 SamsBlog 文章，默认缓存 5 分钟，首页按 `visualConfig.homeBlogPostLimit` 展示最新一篇；可选 `BLOG_*` 配置见 `.env.example`、`server/config.ts`。
+前端 `http://127.0.0.1:5173`，API `http://127.0.0.1:8787`。只预览公共界面可运行 `pnpm dev:web`；未配置 Supabase 时业务列表为空。Fastify 同步 SamsBlog 文章，默认缓存 5 分钟，首页按 `visualConfig.homeBlogPostLimit` 展示最新一篇；可选 `BLOG_*` 配置见 `.env.example`、`server/config.ts`。
 
 ## 验证
 
@@ -61,6 +65,7 @@ pnpm test:e2e
 - 每次发布固定一个提交，在同一 release 中盘点迁移和构建，避免数据库与代码版本错配。
 - 数据库迁移按 CLI 顺序管理。仓库含业务清空迁移，正常更新不能直接执行全部迁移。
 - v2.2.0 的 `20261020041649_simplify_roles_and_map_projects.sql` 会归并旧角色、删除地图标记与项目状态；部署前按 DEPLOY 备份并核对迁移历史，与前后端同步切换，不能只更新静态页面。
+- v2.2.1 依赖 `20261022124444_audit_integrity_fixes.sql`：完整快照、保存冲突检查、会话撤销、媒体归属与地图清理事务。导入库的迁移时间戳可能不同，按 DEPLOY 的导入基线流程执行，不能重放仓库历史。
 - `.env`、上传内容、备份、构建产物和依赖不提交到 Git。版本以 `package.json` 为准，页脚自动读取。
 
 ## 文档

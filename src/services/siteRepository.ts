@@ -12,8 +12,10 @@ import type {
 } from "../domain/types";
 import { translations as defaultTranslations, type TranslationKey, type TranslationOverrides } from "../i18n/translations";
 import { toJson } from "../lib/json";
+import { env } from "../lib/env";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
 import { authenticatedApiRequest, publicApiRequest } from "./apiClient";
+import { z } from "zod";
 
 // 博客公告独立于首页资料加载，避免外部站点拖慢首屏。
 export function getBlogPosts(signal?: AbortSignal): Promise<BlogPost[]> {
@@ -30,7 +32,32 @@ export interface SiteBundle {
 let cachedSiteContent: SiteContent | null = null;
 let contentRequest: Promise<SiteContent> | null = null;
 let bundleRequest: Promise<SiteBundle> | null = null;
-let initialBundleRequest: Promise<SiteBundle> | null = null;
+let initialHomeRequests: ReturnType<typeof loadHomeData> | null = null;
+
+type EditableCollection = "town_members" | "town_history" | "faq_items";
+const collectionRevisions = new Map<EditableCollection, { revision: string | null }>();
+const collectionSnapshot = z.object({ items: z.array(z.record(z.string(), z.unknown())), revision: z.string() });
+
+// 一次读取完整快照；独立的草稿基线不受公开刷新或旧请求迟到影响。
+async function readCollection(collection: EditableCollection, forEditing = false): Promise<Record<string, unknown>[]> {
+  const baseline = forEditing ? { revision: null as string | null } : null;
+  if (baseline) collectionRevisions.set(collection, baseline);
+  const { data, error } = await supabase.rpc("get_site_collection", { p_collection: collection });
+  if (error) throw error;
+  const snapshot = collectionSnapshot.parse(data);
+  if (baseline) baseline.revision = snapshot.revision;
+  return snapshot.items;
+}
+
+async function replaceCollection(collection: EditableCollection, items: unknown[]): Promise<void> {
+  const baseline = collectionRevisions.get(collection);
+  if (!baseline?.revision) throw new Error("error.contentChanged");
+  const { data, error } = await supabase.rpc("save_site_collection", {
+    p_collection: collection, p_revision: baseline.revision, p_items: toJson(items)
+  });
+  if (error) throw error;
+  baseline.revision = z.string().parse(data);
+}
 
 // Normalize the current content envelope. Obsolete flat copy fields were
 // retired after the translation-based editor became the production schema.
@@ -51,7 +78,7 @@ function normalizeSiteContent(value: unknown): SiteContent {
     settings: {
       ...defaultContent.settings,
       ...Object.fromEntries(
-        ["qqGroup", "mayorQq", "kookUrl"]
+        ["qqGroup", "kookUrl"]
           .flatMap(key => typeof settings[key] === "string" ? [[key, settings[key]]] : [])
       )
     } as SiteContent["settings"]
@@ -76,7 +103,10 @@ export function getSiteContent(): Promise<SiteContent> {
 async function loadSiteContent(): Promise<SiteContent> {
   if (!isSupabaseConfigured) return structuredClone(defaultContent);
   const { data, error } = await supabase.from("site_content").select("content").eq("id", 1).maybeSingle();
-  if (error) throw error;
+  if (error) {
+    cachedSiteContent ??= structuredClone(defaultContent);
+    throw error;
+  }
   cachedSiteContent = normalizeSiteContent(data?.content);
   return structuredClone(cachedSiteContent);
 }
@@ -92,11 +122,9 @@ export async function getTownImages(area?: TownImage["area"]): Promise<TownImage
   return (data ?? []).map(mapImage);
 }
 
-export async function getTownMembers(): Promise<TownMember[]> {
+export async function getTownMembers(options: { forEditing?: boolean } = {}): Promise<TownMember[]> {
   if (!isSupabaseConfigured) return defaultMembers;
-  const { data, error } = await supabase.from("town_members").select("*").order("sort_order");
-  if (error) throw error;
-  return (data ?? []).map(mapMember);
+  return (await readCollection("town_members", options.forEditing)).map(mapMember);
 }
 
 export async function getTownArchive(): Promise<{ members: TownMember[]; history: HistoryEvent[]; images: TownImage[] }> {
@@ -105,25 +133,36 @@ export async function getTownArchive(): Promise<{ members: TownMember[]; history
 }
 
 // 历史只在档案与后台读取，不再进入首页加载链。
-export async function getTownHistory(): Promise<HistoryEvent[]> {
+export async function getTownHistory(options: { forEditing?: boolean } = {}): Promise<HistoryEvent[]> {
   if (!isSupabaseConfigured) return defaultHistory;
-  const { data, error } = await supabase.from("town_history").select("*").order("sort_order");
-  if (error) throw error;
-  return (data ?? []).map(mapHistory);
+  return (await readCollection("town_history", options.forEditing)).map(mapHistory);
 }
 
 // 并行加载站点数据；数据库异常直接交给界面错误处理。
-export function preloadSiteBundle(): void {
-  initialBundleRequest ??= loadSiteBundle({});
-  // 首次页面读取同一个结果并展示错误，预加载不单独弹提示。
-  void initialBundleRequest.catch(() => undefined);
+export function preloadHomeData(): void {
+  initialHomeRequests ??= loadHomeData();
+  for (const request of Object.values(initialHomeRequests)) void request.catch(() => undefined);
+}
+
+function loadHomeData() {
+  return {
+    images: getTownImages(),
+    members: getTownMembers(),
+    faqs: isSupabaseConfigured ? readCollection("faq_items").then(rows => rows.map(mapFaq)) : Promise.resolve(defaultFaqs)
+  };
+}
+
+// 首页按区域接收数据；非首屏请求不参与头图就绪判断。
+export function getHomeData() {
+  const requests = initialHomeRequests ?? loadHomeData();
+  initialHomeRequests = null;
+  return requests;
 }
 
 export function getSiteBundle(options: { refreshContent?: boolean } = {}): Promise<SiteBundle> {
   if (options.refreshContent) return loadSiteBundle(options);
-  bundleRequest ??= (initialBundleRequest ?? loadSiteBundle(options))
+  bundleRequest ??= loadSiteBundle(options)
     .finally(() => { bundleRequest = null; });
-  initialBundleRequest = null;
   return bundleRequest;
 }
 
@@ -136,19 +175,18 @@ async function loadSiteBundle(options: { refreshContent?: boolean }): Promise<Si
       faqs: defaultFaqs
     };
   }
-  const [content, members, images, faqResult] = await Promise.all([
-    cachedSiteContent && !options.refreshContent ? cachedSiteContent : getSiteContent(),
-    getTownMembers(),
+  const [content, members, images, faqRows] = await Promise.all([
+    options.refreshContent ? getSiteContent()
+      : cachedSiteContent ?? getSiteContent().catch(() => structuredClone(defaultContent)),
+    getTownMembers({ forEditing: options.refreshContent }),
     getTownImages(),
-    supabase.from("faq_items").select("*").order("sort_order")
+    readCollection("faq_items", options.refreshContent)
   ]);
-  const error = faqResult.error;
-  if (error) throw error;
   return {
     content: structuredClone(content),
     members,
     images,
-    faqs: (faqResult.data ?? []).map(mapFaq)
+    faqs: faqRows.map(mapFaq)
   };
 }
 
@@ -176,8 +214,7 @@ export async function replaceMembers(members: TownMember[]): Promise<void> {
     seen.add(key);
     return false;
   })) throw new Error("error.duplicateMember");
-  const { error } = await supabase.rpc("replace_town_members", {
-    items: normalized.map(member => ({
+  await replaceCollection("town_members", normalized.map(member => ({
       username: member.username,
       role_zh: member.roleZh.trim(),
       role_en: member.roleEn.trim(),
@@ -186,9 +223,7 @@ export async function replaceMembers(members: TownMember[]): Promise<void> {
       show_on_home: member.showOnHome,
       intro_zh: member.introZh.trim(),
       intro_en: member.introEn.trim()
-    }))
-  });
-  if (error) throw error;
+    })));
 }
 
 export async function replaceHistory(history: HistoryEvent[]): Promise<void> {
@@ -200,21 +235,17 @@ export async function replaceHistory(history: HistoryEvent[]): Promise<void> {
     body_en: event.bodyEn,
     image_id: event.imageId
   }));
-  const { error } = await supabase.rpc("replace_town_history", { items });
-  if (error) throw error;
+  await replaceCollection("town_history", items);
 }
 
 export async function replaceFaqs(faqs: FaqItem[]): Promise<void> {
-  const { error } = await supabase.rpc("replace_faq_items", {
-    items: faqs.map(item => ({
+  await replaceCollection("faq_items", faqs.map(item => ({
       question_zh: item.questionZh,
       question_en: item.questionEn,
       answer_zh: item.answerZh,
       answer_en: item.answerEn,
       is_visible: item.visible
-    }))
-  });
-  if (error) throw error;
+    })));
 }
 
 // Image metadata and Storage operations --------------------------------------
@@ -250,39 +281,10 @@ export async function uploadTownImage(
   file: File,
   values: Pick<TownImage, "area" | "captionZh" | "captionEn" | "altZh" | "altEn" | "layout">
 ): Promise<TownImage> {
-  const extension = file.name.match(/\.(png|jpe?g|webp|gif)$/i)?.[0].toLowerCase() ?? "";
-  const storagePath = `${values.area}/${crypto.randomUUID()}${extension}`;
-  const { error: uploadError } = await supabase.storage.from("site-images").upload(storagePath, file, {
-    cacheControl: "3600",
-    upsert: false,
-    contentType: file.type
-  });
-  if (uploadError) throw uploadError;
-  const sourceUrl = supabase.storage.from("site-images").getPublicUrl(storagePath).data.publicUrl;
-  const row = {
-    area: values.area,
-    source_url: sourceUrl,
-    storage_path: storagePath,
-    caption_zh: values.captionZh,
-    caption_en: values.captionEn,
-    alt_zh: values.altZh,
-    alt_en: values.altEn,
-    layout: values.layout,
-    is_visible: true,
-    sort_order: 999
-  };
-  const result = await supabase.from("town_images").insert(row).select("*").single();
-  if (result.error) {
-    const cleanup = await supabase.storage.from("site-images").remove([storagePath]);
-    if (cleanup.error) {
-      const queued = await supabase.rpc("queue_own_storage_cleanup", { p_bucket: "site-images", p_path: storagePath });
-      const code = queued.error ? "SITE_IMAGE_CLEANUP_QUEUE_FAILED" : "SITE_IMAGE_CLEANUP_QUEUED";
-      const errors = [result.error, cleanup.error, ...(queued.error ? [queued.error] : [])];
-      throw Object.assign(new AggregateError(errors, code, { cause: result.error }), { code });
-    }
-    throw result.error;
-  }
-  return mapImage(result.data);
+  const body = new FormData();
+  for (const [key, value] of Object.entries(values)) body.append(key, value);
+  body.append("file", file);
+  return mapImage(await authenticatedApiRequest<Record<string, unknown>>("/api/site/images", { method: "POST", body }, env.VITE_IMAGE_UPLOAD_TIMEOUT_MS));
 }
 
 // Bilibili metadata is resolved through Fastify, while Supabase remains the

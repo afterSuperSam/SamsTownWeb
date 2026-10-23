@@ -20,6 +20,8 @@ import {
 interface ImageManagerProps {
   images: TownImage[];
   setImages: (images: TownImage[]) => void;
+  busy: boolean;
+  setBusy: (busy: boolean) => void;
   onNotice: (message: string, tone?: "success" | "error") => void;
 }
 
@@ -30,7 +32,6 @@ const areaTranslationKeys: Record<TownImageArea, TranslationKey> = {
   gallery: "admin.images.area.gallery",
   join: "admin.images.area.join",
   history: "admin.images.area.history",
-  mapHero: "admin.images.area.mapHero",
   other: "admin.images.area.other"
 };
 const layoutTranslationKeys: Record<TownImageLayout, TranslationKey> = {
@@ -39,12 +40,10 @@ const layoutTranslationKeys: Record<TownImageLayout, TranslationKey> = {
   tall: "admin.images.layout.tall"
 };
 
-// Image metadata and files are managed together so a successful UI state
-// always corresponds to persisted Supabase records.
-export function ImageManager({ images, setImages, onNotice }: ImageManagerProps) {
+// 媒体与元数据共用保存状态，写入期间冻结编辑和排序。
+export function ImageManager({ images, setImages, busy, setBusy, onNotice }: ImageManagerProps) {
   const { t } = useI18n();
   const [file, setFile] = useState<File | null>(null);
-  const [busy, setBusy] = useState(false);
   const { draggedId, setDraggedId, move, drop } = useOrdering(images, setImages);
   const [pendingDelete, setPendingDelete] = useState<TownImage | null>(null);
   const [videoInput, setVideoInput] = useState("");
@@ -129,7 +128,7 @@ export function ImageManager({ images, setImages, onNotice }: ImageManagerProps)
   }
 
   return (
-    <div>
+    <fieldset className="image-manager" disabled={busy}>
       <header className="admin-heading">
         <div><h2>{t("admin.images.title")}</h2><p>{t("admin.images.body")}</p></div>
         <SaveButton type="button" onClick={() => void save()} disabled={busy}></SaveButton>
@@ -141,8 +140,8 @@ export function ImageManager({ images, setImages, onNotice }: ImageManagerProps)
           <span>{file?.name ?? t("admin.images.choose")}</span>
           <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={event => setFile(event.target.files?.[0] ?? null)} />
         </label>
-        <FieldSelect value={draft.area} label={t("admin.images.area")} values={areas} optionLabel={area => t(areaTranslationKeys[area as TownImageArea])} onChange={area => setDraft({ ...draft, area: area as TownImageArea })} />
-        <FieldSelect value={draft.layout} label={t("admin.images.layout")} values={layouts} optionLabel={layout => t(layoutTranslationKeys[layout as TownImageLayout])} onChange={layout => setDraft({ ...draft, layout: layout as TownImageLayout })} />
+        <FieldSelect disabled={busy} value={draft.area} label={t("admin.images.area")} values={areas} optionLabel={area => t(areaTranslationKeys[area as TownImageArea])} onChange={area => setDraft({ ...draft, area: area as TownImageArea })} />
+        <FieldSelect disabled={busy} value={draft.layout} label={t("admin.images.layout")} values={layouts} optionLabel={layout => t(layoutTranslationKeys[layout as TownImageLayout])} onChange={layout => setDraft({ ...draft, layout: layout as TownImageLayout })} />
         <input aria-label={t("admin.images.captionZh")} placeholder={t("admin.images.captionZh")} value={draft.captionZh} onChange={event => setDraft({ ...draft, captionZh: event.target.value })} />
         <input aria-label={t("admin.images.captionEn")} placeholder={t("admin.images.captionEn")} value={draft.captionEn} onChange={event => setDraft({ ...draft, captionEn: event.target.value })} />
         <input aria-label={t("admin.images.altZh")} placeholder={t("admin.images.altZh")} value={draft.altZh} onChange={event => setDraft({ ...draft, altZh: event.target.value })} />
@@ -161,8 +160,8 @@ export function ImageManager({ images, setImages, onNotice }: ImageManagerProps)
           value={videoInput}
           onChange={event => setVideoInput(event.target.value)}
         />
-        <FieldSelect value={videoDraft.area} label={t("admin.images.area")} values={videoAreas} optionLabel={area => t(areaTranslationKeys[area as TownImageArea])} onChange={area => setVideoDraft({ ...videoDraft, area: area as TownImageArea })} />
-        <FieldSelect value={videoDraft.layout} label={t("admin.images.layout")} values={layouts} optionLabel={layout => t(layoutTranslationKeys[layout as TownImageLayout])} onChange={layout => setVideoDraft({ ...videoDraft, layout: layout as TownImageLayout })} />
+        <FieldSelect disabled={busy} value={videoDraft.area} label={t("admin.images.area")} values={videoAreas} optionLabel={area => t(areaTranslationKeys[area as TownImageArea])} onChange={area => setVideoDraft({ ...videoDraft, area: area as TownImageArea })} />
+        <FieldSelect disabled={busy} value={videoDraft.layout} label={t("admin.images.layout")} values={layouts} optionLabel={layout => t(layoutTranslationKeys[layout as TownImageLayout])} onChange={layout => setVideoDraft({ ...videoDraft, layout: layout as TownImageLayout })} />
         <input aria-label={t("admin.images.captionZh")} placeholder={t("admin.images.captionZh")} value={videoDraft.captionZh} onChange={event => setVideoDraft({ ...videoDraft, captionZh: event.target.value })} />
         <input aria-label={t("admin.images.captionEn")} placeholder={t("admin.images.captionEn")} value={videoDraft.captionEn} onChange={event => setVideoDraft({ ...videoDraft, captionEn: event.target.value })} />
         <Button type="submit" className="primary" disabled={busy || !videoInput.trim()}>
@@ -176,7 +175,7 @@ export function ImageManager({ images, setImages, onNotice }: ImageManagerProps)
             className={`image-admin-card panel ${draggedId === image.id ? "is-dragging" : ""}`}
             key={image.id}
             onDragOver={event => event.preventDefault()}
-            onDrop={() => drop(image.id)}
+            onDrop={() => { if (!busy) drop(image.id); }}
           >
             <div className="image-admin-preview">
               <TownMedia media={image} alt={image.altZh} loading="lazy" />
@@ -184,7 +183,7 @@ export function ImageManager({ images, setImages, onNotice }: ImageManagerProps)
             </div>
             <div className="image-admin-fields">
               <span className="image-order">
-                <i className="drag-handle" draggable onDragStart={() => setDraggedId(image.id)} onDragEnd={() => setDraggedId(null)} aria-hidden="true"><GripVertical size={18} /></i>
+                <i className="drag-handle" draggable={!busy} onDragStart={() => setDraggedId(image.id)} onDragEnd={() => setDraggedId(null)} aria-hidden="true"><GripVertical size={18} /></i>
                 <OrderControls index={index} count={images.length} onMove={offset => move(index, offset)}>
                 {t("admin.images.order", {
                   index: String(index + 1).padStart(2, "0"),
@@ -199,8 +198,8 @@ export function ImageManager({ images, setImages, onNotice }: ImageManagerProps)
               <input aria-label={t("admin.images.captionEn")} placeholder={t("admin.images.captionEn")} value={image.captionEn} onChange={event => updateImage({ ...image, captionEn: event.target.value })} />
               <input aria-label={t("admin.images.altZh")} placeholder={t("admin.images.altZh")} value={image.altZh} onChange={event => updateImage({ ...image, altZh: event.target.value })} />
               <input aria-label={t("admin.images.altEn")} placeholder={t("admin.images.altEn")} value={image.altEn} onChange={event => updateImage({ ...image, altEn: event.target.value })} />
-              <FieldSelect value={image.area} label={t("admin.images.area")} values={image.mediaType === "bilibili" ? videoAreas : areas} optionLabel={area => t(areaTranslationKeys[area as TownImageArea])} onChange={area => updateImage({ ...image, area: area as TownImageArea })} />
-              <FieldSelect value={image.layout} label={t("admin.images.layout")} values={layouts} optionLabel={layout => t(layoutTranslationKeys[layout as TownImageLayout])} onChange={layout => updateImage({ ...image, layout: layout as TownImageLayout })} />
+              <FieldSelect disabled={busy} value={image.area} label={t("admin.images.area")} values={image.mediaType === "bilibili" ? videoAreas : areas} optionLabel={area => t(areaTranslationKeys[area as TownImageArea])} onChange={area => updateImage({ ...image, area: area as TownImageArea })} />
+              <FieldSelect disabled={busy} value={image.layout} label={t("admin.images.layout")} values={layouts} optionLabel={layout => t(layoutTranslationKeys[layout as TownImageLayout])} onChange={layout => updateImage({ ...image, layout: layout as TownImageLayout })} />
               <label className="visibility-toggle">
                 <input type="checkbox" checked={image.visible} onChange={event => updateImage({ ...image, visible: event.target.checked })} />
                 {t(image.visible ? "app.visible" : "app.hidden")}
@@ -220,16 +219,17 @@ export function ImageManager({ images, setImages, onNotice }: ImageManagerProps)
           onConfirm={() => void remove(pendingDelete)}
         />
       ) : null}
-    </div>
+    </fieldset>
   );
 }
 
-function FieldSelect({ value, label, values, optionLabel = value => value, onChange }: {
+function FieldSelect({ value, label, values, optionLabel = value => value, onChange, disabled }: {
   value: string;
   label: string;
   values: readonly string[];
   optionLabel?: (value: string) => string;
   onChange: (value: string) => void;
+  disabled: boolean;
 }) {
-  return <SelectField value={value} label={label} options={values.map(option => ({ value: option, label: optionLabel(option) }))} onChange={onChange} />;
+  return <SelectField value={value} label={label} options={values.map(option => ({ value: option, label: optionLabel(option) }))} onChange={onChange} disabled={disabled} />;
 }

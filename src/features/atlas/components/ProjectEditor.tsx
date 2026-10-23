@@ -49,7 +49,7 @@ export function ProjectEditor({ mapId, initial, cells, owners, currentUserId, ca
       <form className="map-editor-form" onSubmit={submit}>
         <label>{t("map.claim.project")}<input required maxLength={100} value={draft.projectName} onChange={event => setDraft({ ...draft, projectName: event.target.value })} /></label>
         <label>{t("map.claim.minecraft")}<input required maxLength={16} pattern="[A-Za-z0-9_]{1,16}" value={draft.minecraftUsername} onChange={event => setDraft({ ...draft, minecraftUsername: event.target.value })} /></label>
-        <label className="map-field-wide">{t("map.claim.description")}<textarea rows={8} value={draft.description} onChange={event => setDraft({ ...draft, description: event.target.value })} /></label>
+        <label className="map-field-wide">{t("map.claim.description")}<textarea rows={8} maxLength={4000} value={draft.description} onChange={event => setDraft({ ...draft, description: event.target.value })} /></label>
         <div className="map-color-field"><span>{t("map.claim.color")}</span><MapColorPicker value={draft.color} label={t("map.claim.color")} onChange={color => setDraft({ ...draft, color })} /></div>
         {canManage ? <label className="map-field-wide">{t("map.claim.transfer")}<SelectField value={draft.ownerId ?? ""} label={t("map.claim.transfer")} options={owners.map(owner => ({ value: owner.id, label: `${owner.username} · ${t(roleLabels[owner.role])}` }))} onChange={ownerId => setDraft({ ...draft, ownerId })} disabled={!owners.length} /></label> : null}
         <p className="map-editor-meta">{t("map.claim.cells", { count: cells.length })}</p>

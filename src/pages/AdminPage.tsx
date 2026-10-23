@@ -92,7 +92,7 @@ export function AdminPage() {
     const revision = ++loadRevision.current;
     setStatus("loading");
     try {
-      const [bundle, historyEvents] = await Promise.all([getSiteBundle({ refreshContent: true }), getTownHistory()]);
+      const [bundle, historyEvents] = await Promise.all([getSiteBundle({ refreshContent: true }), getTownHistory({ forEditing: true })]);
       if (revision !== loadRevision.current) return;
       setContent(bundle.content);
       setMembers(bundle.members);
@@ -180,10 +180,10 @@ export function AdminPage() {
         </div>
         <nav aria-label={t("admin.workspace")}>
           {tabs.map(([key, icon, label]) => (
-            <button type="button" className={adminModule(tab) === adminModule(key) ? "active" : ""} aria-current={adminModule(tab) === adminModule(key) ? "page" : undefined} onClick={() => selectTab(key)} key={key}>{icon}{t(label)}</button>
+            <button type="button" disabled={busy} className={adminModule(tab) === adminModule(key) ? "active" : ""} aria-current={adminModule(tab) === adminModule(key) ? "page" : undefined} onClick={() => selectTab(key)} key={key}>{icon}{t(label)}</button>
           ))}
         </nav>
-        <Button type="button"  onClick={() => void leaveAdmin()}><LogOut size={16} />{t("admin.signOut")}</Button>
+        <Button type="button" disabled={busy} onClick={() => void leaveAdmin()}><LogOut size={16} />{t("admin.signOut")}</Button>
       </aside>
 
       <section className="admin-main">
@@ -193,7 +193,7 @@ export function AdminPage() {
           </div>
         ) : null}
         {dataTabs.has(tab) && status !== "ready" ? <DataGate status={status} retry={loadData} /> : null}
-        <AdminSectionNav tab={tab} selectTab={selectTab} />
+        <AdminSectionNav tab={tab} selectTab={selectTab} disabled={busy} />
 
         {status === "ready" && tab === "content" ? (
           <ContentEditor
@@ -206,7 +206,7 @@ export function AdminPage() {
             })}
           />
         ) : null}
-        {status === "ready" && tab === "images" ? <ImageManager images={images} setImages={setImages} onNotice={showNotice} /> : null}
+        {status === "ready" && tab === "images" ? <ImageManager images={images} setImages={setImages} busy={busy} setBusy={setBusy} onNotice={showNotice} /> : null}
         {status === "ready" && tab === "members" ? (
           <EditorSection title={t("admin.members.title")} body={t("admin.members.body")} busy={busy} onSave={() => void run(() => replaceMembers(members))}>
             <div className="member-filters">
@@ -314,7 +314,7 @@ function adminModule(tab: Tab): "content" | "media" | "site" | "accounts" {
   return "accounts";
 }
 
-function AdminSectionNav({ tab, selectTab }: { tab: Tab; selectTab: (tab: Tab) => void }) {
+function AdminSectionNav({ tab, selectTab, disabled }: { tab: Tab; selectTab: (tab: Tab) => void; disabled: boolean }) {
   const { t } = useI18n();
   const groups: Record<ReturnType<typeof adminModule>, Array<[Tab, TranslationKey]>> = {
     content: [
@@ -328,7 +328,7 @@ function AdminSectionNav({ tab, selectTab }: { tab: Tab; selectTab: (tab: Tab) =
   const options = groups[adminModule(tab)];
   if (options.length < 2) return null;
   return <nav className="admin-section-nav" aria-label={t("admin.title")}>
-    {options.map(([key, label]) => <button type="button" className={tab === key ? "active" : ""} aria-current={tab === key ? "page" : undefined} onClick={() => selectTab(key)} key={key}>{t(label)}</button>)}
+    {options.map(([key, label]) => <button type="button" disabled={disabled} className={tab === key ? "active" : ""} aria-current={tab === key ? "page" : undefined} onClick={() => selectTab(key)} key={key}>{t(label)}</button>)}
   </nav>;
 }
 

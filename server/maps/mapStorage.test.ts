@@ -1,4 +1,5 @@
 import { Readable } from "node:stream";
+import * as tilePipeline from "./mapTilePipeline.js";
 import {
   assertSafeMapDimensions,
   cleanupStagedMap,
@@ -10,20 +11,20 @@ import {
 
 
 import type { FastifyBaseLogger } from "fastify";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ upload: vi.fn(), remove: vi.fn(), queue: vi.fn(), from: vi.fn(), list: vi.fn() }));
+const mocks = vi.hoisted(() => ({ upload: vi.fn(), remove: vi.fn(), queue: vi.fn(), from: vi.fn(), rpc: vi.fn(), list: vi.fn() }));
 vi.mock("node:fs/promises", async importOriginal => ({
   ...await importOriginal<typeof import("node:fs/promises")>(),
   readFile: vi.fn(async () => Buffer.from("image"))
 }));
 vi.mock("../supabaseAdmin.js", () => ({
-  supabaseAdmin: { from: mocks.from, storage: { from: () => ({ upload: mocks.upload, remove: mocks.remove }) } }
+  supabaseAdmin: { from: mocks.from, rpc: mocks.rpc, storage: { from: () => ({ upload: mocks.upload, remove: mocks.remove }) } }
 }));
 vi.mock("../storageCleanupQueue.js", () => ({ queueStorageCleanup: mocks.queue, listStorageFiles: mocks.list }));
 
 const { uploadMapAssets } = await import("./mapStorage.js");
-const { deleteTownMap } = await import("./mapService.js");
+const { createTownMap, deleteTownMap } = await import("./mapService.js");
 const logger = { error: vi.fn() } as unknown as FastifyBaseLogger;
 const image = { path: "source.png", directory: "staged", filename: "source.png", mimetype: "image/png" };
 const tiles = { width: 16, height: 16, tileSize: 256, maxLevel: 4, tileRoot: "tiles",
@@ -62,23 +63,42 @@ describe("地图删除并发", () => {
   it("读取确认信息后底图发生变化时，不删除新版本和文件", async () => {
     mocks.list.mockResolvedValue([]);
     mocks.list.mockClear();
-    let deleted: { id: string } | null = null;
-    const deletion = {
-      eq: vi.fn(() => deletion),
-      select: () => ({ maybeSingle: async () => ({ data: deleted, error: null }) }),
-      then: (resolve: (value: { error: null }) => unknown) => Promise.resolve({ error: null }).then(resolve)
-    };
+    mocks.rpc.mockResolvedValueOnce({ error: { message: "error.mapDataChanged" } }).mockResolvedValueOnce({ error: null });
     mocks.from.mockReturnValue({
       select: () => ({ eq: () => ({ single: async () => ({
         data: { name: "Town", storage_prefix: "map/old" }, error: null
-      }) }) }),
-      delete: () => deletion
+      }) }) })
     });
-    await expect(deleteTownMap("map", "Town", logger)).rejects.toMatchObject({ message: "error.mapDataChanged", statusCode: 409 });
+    await expect(deleteTownMap("map", "Town", "owner")).rejects.toMatchObject({ message: "error.mapDataChanged", statusCode: 409 });
     expect(mocks.list).not.toHaveBeenCalled();
-    deleted = { id: "map" };
-    await expect(deleteTownMap("map", "Town", logger)).resolves.toEqual({ ok: true });
-    expect(mocks.list).toHaveBeenCalledWith("town-maps", "map/old");
+    await expect(deleteTownMap("map", "Town", "owner")).resolves.toEqual({ ok: true });
+    expect(mocks.rpc).toHaveBeenLastCalledWith("delete_town_map", {
+      p_map_id: "map", p_confirm_name: "Town", p_storage_prefix: "map/old", p_actor_id: "owner"
+    });
+    expect(mocks.list).not.toHaveBeenCalled();
+  });
+});
+
+describe("地图提交结果不明", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(tilePipeline, "generateMapTiles").mockResolvedValue(tiles);
+    vi.spyOn(tilePipeline, "cleanupStagedMap").mockResolvedValue(undefined);
+    mocks.upload.mockReset().mockResolvedValue({ error: null });
+    mocks.remove.mockResolvedValue({ error: null });
+    mocks.list.mockResolvedValue(["uploaded-map/tiles/4/0_0.webp"]);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    ["", false], ["08007", false], ["40003", false], ["23505", true]
+  ])("错误 %s 只在明确拒绝提交时回收新切片", async (code, shouldRemove) => {
+    mocks.from.mockReturnValue({ insert: () => ({ select: () => ({
+      single: async () => ({ data: null, error: { code, message: "Commit unavailable" } })
+    }) }) });
+    await expect(createTownMap(image, { name: "Town", description: "", shortLabel: "", visible: true, sortOrder: 0 }, "owner", logger)).rejects.toThrow();
+    expect(mocks.remove).toHaveBeenCalledTimes(shouldRemove ? 1 : 0);
+    expect(tilePipeline.cleanupStagedMap).toHaveBeenCalledWith(image);
   });
 });
 

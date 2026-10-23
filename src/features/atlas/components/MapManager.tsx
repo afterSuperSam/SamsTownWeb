@@ -144,7 +144,7 @@ function MapFields({ fields, setFields }: { fields: MapUploadFields; setFields: 
   return <>
     <label>{t("map.manage.name")}<input required maxLength={80} value={fields.name} onChange={event => setFields({ ...fields, name: event.target.value })} /></label>
     <label>{t("map.manage.label")}<input maxLength={24} value={fields.shortLabel} onChange={event => setFields({ ...fields, shortLabel: event.target.value })} /></label>
-    <label className="map-field-wide">{t("map.manage.description")}<textarea rows={4} value={fields.description} onChange={event => setFields({ ...fields, description: event.target.value })} /></label>
+    <label className="map-field-wide">{t("map.manage.description")}<textarea rows={4} maxLength={4000} value={fields.description} onChange={event => setFields({ ...fields, description: event.target.value })} /></label>
     <label>{t("map.manage.visibility")}<span className="map-checkbox"><input type="checkbox" checked={fields.visible} onChange={event => setFields({ ...fields, visible: event.target.checked })} />{t(fields.visible ? "app.visible" : "app.hidden")}</span></label>
     <label>{t("map.manage.order")}<input type="number" value={fields.sortOrder ?? 0} onChange={event => setFields({ ...fields, sortOrder: Number(event.target.value) })} /></label>
   </>;

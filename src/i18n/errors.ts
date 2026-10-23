@@ -2,11 +2,12 @@ import type { TranslationKey } from "./translations";
 
 const knownErrorKeys = new Set<TranslationKey>([
   "error.generic",
+  "error.invalidImage",
+  "error.fileTooLarge",
+  "error.contentChanged",
   "error.blogFeed",
   "error.notFound",
   "error.rateLimit",
-  "error.imageCleanupQueued",
-  "error.imageCleanupQueueFailed",
   "error.mapDetailIncomplete",
   "error.mapDataChanged",
   "error.session",
@@ -65,8 +66,6 @@ function readError(error: unknown): { message: string; code: string } {
 // keys pass through; Supabase and network failures map to stable product copy.
 export function getErrorTranslationKey(error: unknown): TranslationKey {
   const details = readError(error);
-  if (details.code === "SITE_IMAGE_CLEANUP_QUEUED") return "error.imageCleanupQueued";
-  if (details.code === "SITE_IMAGE_CLEANUP_QUEUE_FAILED") return "error.imageCleanupQueueFailed";
   if (knownErrorKeys.has(details.message as TranslationKey)) return details.message as TranslationKey;
   const message = details.message.toLowerCase();
   if (["21000", "42703", "PGRST202", "PGRST204", "PGRST205"].includes(details.code)) {

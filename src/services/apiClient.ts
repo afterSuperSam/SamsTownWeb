@@ -2,7 +2,7 @@ import { env } from "../lib/env";
 import { supabase } from "../lib/supabase";
 
 // 请求统一处理会话、请求头、取消、超时和错误码。
-async function request<T>(path: string, init: RequestInit, sessionMode: "none" | "optional" | "required" = "none"): Promise<T> {
+async function request<T>(path: string, init: RequestInit, sessionMode: "none" | "optional" | "required" = "none", timeoutMs = env.VITE_API_TIMEOUT_MS): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
   if (sessionMode !== "none") {
@@ -17,7 +17,7 @@ async function request<T>(path: string, init: RequestInit, sessionMode: "none" |
   const abortFromCaller = () => controller.abort(init.signal?.reason);
   init.signal?.addEventListener("abort", abortFromCaller, { once: true });
   if (init.signal?.aborted) abortFromCaller();
-  const timeout = globalThis.setTimeout(() => controller.abort("timeout"), env.VITE_API_TIMEOUT_MS);
+  const timeout = globalThis.setTimeout(() => controller.abort("timeout"), timeoutMs);
   try {
     response = await fetch(`${env.VITE_API_URL}${path}`, { ...init, headers, signal: controller.signal });
     if (response.status !== 204) {
@@ -50,6 +50,6 @@ export function sessionAwareApiRequest<T>(path: string, init: RequestInit = {}):
   return request<T>(path, init, "optional");
 }
 
-export function authenticatedApiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
-  return request<T>(path, init, "required");
+export function authenticatedApiRequest<T>(path: string, init: RequestInit = {}, timeoutMs?: number): Promise<T> {
+  return request<T>(path, init, "required", timeoutMs);
 }

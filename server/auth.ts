@@ -26,6 +26,20 @@ async function authenticate(request: FastifyRequest, reply: FastifyReply, allowP
     await reply.code(401).send({ code: "error.session" });
     return null;
   }
+  // getUser 验证签名后，再核验会话仍存在且未被管理员重置作废。
+  let sessionId: unknown;
+  try { sessionId = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString()).session_id; }
+  catch { sessionId = null; }
+  if (typeof sessionId !== "string" || !/^[0-9a-f-]{36}$/i.test(sessionId)) {
+    await reply.code(401).send({ code: "error.session" });
+    return null;
+  }
+  const session = await supabaseAdmin.rpc("is_current_auth_session", { p_user_id: data.user.id, p_session_id: sessionId });
+  if (session.error) throw session.error;
+  if (!session.data) {
+    await reply.code(401).send({ code: "error.session" });
+    return null;
+  }
   const profile = await supabaseAdmin.from("profiles").select("role,must_change_password").eq("id", data.user.id).single();
   if (profile.error || !profile.data) {
     await reply.code(403).send({ code: "error.permission" });
@@ -50,12 +64,4 @@ export async function requireOwner(request: FastifyRequest, reply: FastifyReply)
   const actor = await authenticate(request, reply);
   if (!actor) return;
   if (actor.role !== "owner") return reply.code(403).send({ code: "error.permission" });
-}
-
-export async function requireMapManager(request: FastifyRequest, reply: FastifyReply) {
-  const actor = await authenticate(request, reply);
-  if (!actor) return;
-  if (actor.role !== "owner") {
-    return reply.code(403).send({ code: "error.permission" });
-  }
 }

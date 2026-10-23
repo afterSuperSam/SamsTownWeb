@@ -1,5 +1,66 @@
 import { expect, test } from "@playwright/test";
 
+test("homepage hero opens while secondary data is still pending", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.route("**/api/site/hero?area=hero", route => route.fulfill({
+    contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080"><path fill="#d38d42" d="M0 0h1920v1080H0z"/></svg>'
+  }));
+  await page.route("**/src/services/siteRepository.ts*", route => route.fulfill({
+    contentType: "application/javascript", body: `
+      import { defaultContent } from "/src/domain/defaults.ts";
+      export const getSiteContent = async () => defaultContent;
+      export const preloadHomeData = () => {};
+      export const getBlogPosts = async () => [];
+      const delayed = value => new Promise(resolve => window.addEventListener("release-home-data", () => resolve(value), { once: true }));
+      export const getHomeData = () => ({
+        images: delayed([]), members: delayed([]),
+        faqs: delayed([{ id: "delayed-faq", questionZh: "延迟返回的问题", questionEn: "Delayed FAQ", answerZh: "异步补齐", answerEn: "Loaded", visible: true, sortOrder: 0 }])
+      });
+    `
+  }));
+  await page.goto("/");
+  await expect(page.locator(".hero h1")).toBeVisible();
+  await expect(page.locator(".site-initial-load")).toHaveCount(0);
+  await expect(page.locator(".hero img")).toHaveJSProperty("naturalWidth", 1920);
+  await expect(page.getByText("延迟返回的问题")).toHaveCount(0);
+  await page.evaluate(() => window.dispatchEvent(new Event("release-home-data")));
+  await expect(page.getByText("延迟返回的问题")).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("late initial session does not cover public content again after its deadline", async ({ page }) => {
+  await page.route("**/src/lib/env.ts*", route => route.fulfill({ contentType: "application/javascript", body: "export const env = { VITE_API_TIMEOUT_MS: 80 };" }));
+  await page.route("**/src/lib/supabase.ts*", route => route.fulfill({ contentType: "application/javascript", body: `
+    export const isSupabaseConfigured = true;
+    export const supabase = { auth: { onAuthStateChange(callback) {
+      const notify = () => callback("INITIAL_SESSION", { user: { id: "fixture-member" } });
+      window.addEventListener("restore-session", notify);
+      return { data: { subscription: { unsubscribe() { window.removeEventListener("restore-session", notify); } } } };
+    } } };
+  ` }));
+  await page.route("**/src/services/authService.ts*", route => route.fulfill({ contentType: "application/javascript", body: "export const getCurrentProfile = () => new Promise(() => {});" }));
+  await page.route("**/src/main.tsx*", route => route.fulfill({ contentType: "application/javascript", body: `
+    import React from "/node_modules/.vite/deps/react.js";
+    import ReactDOM from "/node_modules/.vite/deps/react-dom_client.js";
+    import { AuthProvider, useAuth } from "/src/state/AuthContext.tsx";
+    function Probe() {
+      const { loading, profile } = useAuth();
+      return React.createElement("main", { "data-loading": String(loading), "data-authorized": String(Boolean(profile)) });
+    }
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(AuthProvider, null, React.createElement(Probe)));
+  ` }));
+  await page.goto("/");
+  await expect(page.locator("main")).toHaveAttribute("data-loading", "false");
+  await page.evaluate(async () => {
+    window.dispatchEvent(new Event("restore-session"));
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  await expect(page.locator("main")).toHaveAttribute("data-loading", "false");
+  await expect(page.locator("main")).toHaveAttribute("data-authorized", "false");
+});
+
 test("public navigation and account entry", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));

@@ -6,7 +6,6 @@ export const defaultContent: SiteContent = {
   translations: {},
   settings: {
     qqGroup: "",
-    mayorQq: "",
     kookUrl: ""
   }
 };

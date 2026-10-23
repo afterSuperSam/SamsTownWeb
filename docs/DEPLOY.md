@@ -1,6 +1,6 @@
 # 部署
 
-Ubuntu 24.04；生产域名 `yingwutown.top`。Nginx 托管前端，Fastify 只监听本机。已有部署直接从“更新”开始。
+Ubuntu 24.04；生产域名 `moesam.com`。Nginx 托管前端，Fastify 只监听本机。已有部署直接从“更新”开始。
 
 ## 当前 2GB 服务器部署约定
 
@@ -10,7 +10,7 @@ Ubuntu 24.04；生产域名 `yingwutown.top`。Nginx 托管前端，Fastify 只�
 - 路径统一 `/opt/samstownweb/releases/<版本>-<日期>`、`/opt/samstownweb/current`、`/etc/samstownweb.env`；服务 `samstownweb-api`。
 - 实际 Supabase 项目以 `.env` 的 URL 为准，必须同时核对 CLI linked 项目，不能把旧项目迁移盘点误当作新项目状态。
 - 新项目保留现有账号及 Storage；不重放初始化、清空或退役脚本。迁移历史时间戳与仓库可能不同，不能盲目 `db push`。
-- 以下为源码式部署参考；完整检查在本机或 CI 执行，不在小内存生产机执行。
+- 以下统一使用本地产物部署；完整检查在本机或 CI 执行，不在小内存生产机执行。旧 `dist/` 不可直接复用。
 
 ## 1. 准备环境与源码
 
@@ -22,14 +22,12 @@ sudo apt install -y git curl ca-certificates nginx certbot python3-certbot-nginx
 sudo npm install -g pnpm@11.9.0
 node --version
 pnpm --version
-ssh -T git@github.com
 ```
 
-私有仓库需先把服务器 SSH 公钥加入 GitHub 的只读 Deploy key。不要把私钥放进仓库。
+私有仓库在开发机克隆、验证和构建，生产服务器只接收产物，不需要 GitHub 私钥。不要把任何私钥放进仓库。
 
 ```bash
-sudo install -d -m 755 -o "$(id -un)" -g "$(id -gn)" /opt/samstownweb /opt/samstownweb/source /opt/samstownweb/releases
-git clone git@github.com:afterSuperSam/SamsTownWeb.git /opt/samstownweb/source
+sudo install -d -m 755 -o "$(id -un)" -g "$(id -gn)" /opt/samstownweb /opt/samstownweb/releases
 id samstownweb || sudo useradd --system --user-group --home-dir /var/lib/samstownweb --create-home --shell /usr/sbin/nologin samstownweb
 # 环境文件直接放 /etc/samstownweb.env，不创建同名目录。
 ```
@@ -43,13 +41,13 @@ id samstownweb || sudo useradd --system --user-group --home-dir /var/lib/samstow
 ```dotenv
 VITE_SUPABASE_URL=https://PROJECT_REF.supabase.co
 VITE_SUPABASE_ANON_KEY=YOUR_PUBLIC_KEY
-VITE_API_URL=https://yingwutown.top
+VITE_API_URL=https://moesam.com
 SUPABASE_URL=https://PROJECT_REF.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVICE_ROLE_KEY
 API_HOST=127.0.0.1
 API_PORT=8787
 API_TRUST_PROXY=loopback
-WEB_ORIGIN=https://yingwutown.top
+WEB_ORIGIN=https://moesam.com
 ANALYTICS_IP_PEPPER=YOUR_INDEPENDENT_RANDOM_32_PLUS_CHARACTER_SECRET
 ```
 
@@ -58,23 +56,17 @@ sudo chown root:samstownweb /etc/samstownweb.env
 sudo chmod 640 /etc/samstownweb.env
 ```
 
-构建账号必须能读取该文件；非 root 部署用户可加入 `samstownweb` 组后重新登录。不要改为公开可读。更多可选配置见 `.env.example` 和 `server/config.ts`。`VITE_*` 会进入浏览器，不能放 Service Role Key；修改它们后必须重新构建。
+不要把生产环境文件传回开发机或改为公开可读。在开发机的 `.env.production.local` 仅填写上述三个 `VITE_*` 公共值；生产服务端密钥保留在服务器。更多可选配置见 `.env.example` 和 `server/config.ts`。`VITE_*` 修改后必须重新构建。`SUPABASE_REQUEST_TIMEOUT_MS` 默认 15000，限制服务端上游请求等待时间。
 
 Supabase 关闭公开注册，保留 Email/Password 登录；Site URL 和 Redirect URL 使用站点 HTTPS 地址。已有账号和管理（数据库角色 owner）不重新初始化。
 
 ## 3. 固定版本与数据库
 
-每次发布先固定提交，迁移盘点和构建均在同一个 release 中完成。下面在同一终端执行；只调整父目录归属，不递归更改环境目录权限。按 [官方迁移流程](https://supabase.com/docs/guides/deployment/database-migrations)盘点：
+每次发布先固定提交。以下在开发机的项目目录执行，确认工作区没有未提交修改；迁移盘点和构建之间不要切换提交。按 [官方迁移流程](https://supabase.com/docs/guides/deployment/database-migrations)盘点：
 
 ```bash
-sudo chown "$(id -un):$(id -gn)" /opt/samstownweb
-cd /opt/samstownweb/source
-git fetch --prune origin
-REV="$(git rev-parse origin/main)"
-RELEASE="/opt/samstownweb/releases/${REV}-$(date +%Y%m%d%H%M%S)"
-git worktree add --detach "$RELEASE" "$REV"
-ln -s /etc/samstownweb.env "$RELEASE/.env"
-cd "$RELEASE"
+git status --short
+git rev-parse HEAD
 pnpm dlx supabase@2.109.1 login
 pnpm dlx supabase@2.109.1 link --project-ref YOUR_PROJECT_REF
 pnpm dlx supabase@2.109.1 migration list --linked
@@ -84,17 +76,54 @@ pnpm dlx supabase@2.109.1 db lint --linked --level warning
 
 **仓库包含 `202610050001_reset_business_data_keep_accounts.sql` 业务清空迁移。** 正常发布只盘点，不自动 push。待执行列表包含清空、Storage 清理前置或历史版本不一致时停止，先核对基线及可恢复备份；不要手工挑 SQL、删旧迁移或使用 `--include-all` 绕过检查。
 
-只有已审查、备份验证通过的维护窗口才在该 release 执行 `db push --linked`。新建数据库也需先确认这条完整迁移链适用。`20261018080615_retire_forum_and_manual_notices.sql` 会删除旧论坛与手动公告数据，需先备份；原论坛头图转入“其他”，不删除图片文件。浏览器仍不能直接写入 `profiles`。类型更新在本地进行：
+只有待执行列表确认无误、备份验证通过的维护窗口，才从该固定提交执行 `pnpm dlx supabase@2.109.1 db push --linked`。新建数据库也需先确认完整迁移链适用。`20261018080615_retire_forum_and_manual_notices.sql` 会删除旧论坛与手动公告数据，需先备份；原论坛头图转入“其他”，不删除图片文件。浏览器仍不能直接写入 `profiles`。类型更新在本地进行：
 
 ```bash
 pnpm dlx supabase@2.109.1 gen types typescript --linked > src/lib/database.types.ts
 ```
 
-首个 Owner 仅在没有 Owner 的新部署创建。在可信终端设置 `BOOTSTRAP_EMAIL`、`BOOTSTRAP_PASSWORD` 后，使用服务器依赖执行以下一次性初始化；不要在前端运行或把密码写入源码：
+### 图片优化与首屏
+
+v2.2.2 的图片与首屏优化不需要新迁移。部署时先更新 Fastify，再更新前端，确保 `/api/site/hero` 和 `/api/site/images` 可用；不要仅上传静态文件。Nginx 应启用下文的 gzip 与静态图片缓存，WebP 无需再次 gzip。`SITE_IMAGE_WEBP_QUALITY` 默认 90；上传请求等待时间由 `VITE_IMAGE_UPLOAD_TIMEOUT_MS` 控制，默认 120 秒。
+
+已有图片的优化在可信开发机执行，先查看测量结果再应用。脚本共用上传处理，不删除原图；原引用与结果写到系统临时目录并打印路径，需留存以便回溯。本次已有云端展示图已完成转换，不需要重复执行。打包时带上 `images/optimized` 生成的两档 WebP（构建会复制到 `dist`）；本地旧路径无需改数据库。
+
+```powershell
+node --env-file=.env --import tsx scripts/optimize-site-images.ts
+node --env-file=.env --import tsx scripts/optimize-site-images.ts --apply
+```
+
+### 导入库的迁移时间戳不同
+
+当前 SamsTownWeb 项目为 `zqddeeljxwfkguqugucg`，以本机 `.env` 的 URL 和 CLI 项目列表再次核对。该库导入时生成了新的历史时间戳，不能直接从仓库根目录执行 `db push`。不要修写云端历史、重放旧迁移或用 `--include-all`。在独立临时目录取回完整已应用基线，再加入评审过的新增迁移：
+
+```powershell
+$migrationWorkspace = Join-Path $env:TEMP ('samstownweb-migrations-' + [guid]::NewGuid())
+New-Item -ItemType Directory -Path "$migrationWorkspace/supabase" | Out-Null
+Copy-Item supabase/config.toml "$migrationWorkspace/supabase/config.toml"
+pnpm dlx supabase@2.109.1 link --project-ref zqddeeljxwfkguqugucg --workdir $migrationWorkspace
+if ($LASTEXITCODE) { throw '项目关联失败' }
+pnpm dlx supabase@2.109.1 migration fetch --linked --workdir $migrationWorkspace
+if ($LASTEXITCODE) { throw '读取迁移基线失败' }
+# 当前版本的增量；已应用时同名文件不会再次执行。
+Copy-Item supabase/migrations/20261022124444_audit_integrity_fixes.sql "$migrationWorkspace/supabase/migrations/"
+pnpm dlx supabase@2.109.1 db push --linked --dry-run --workdir $migrationWorkspace
+if ($LASTEXITCODE) { throw '迁移预演失败' }
+```
+
+人工核对输出仅含本次新迁移或没有待执行项，再在维护窗口执行以下命令。将来版本同样先评审新增列表，不要批量复制旧迁移到基线目录。
+
+```powershell
+pnpm dlx supabase@2.109.1 db push --linked --workdir $migrationWorkspace
+if ($LASTEXITCODE) { throw '迁移失败，停止切换版本' }
+pnpm dlx supabase@2.109.1 db lint --linked --schema public,private --level warning --fail-on error --workdir $migrationWorkspace
+pnpm dlx supabase@2.109.1 migration list --linked --workdir $migrationWorkspace
+```
+
+首个 Owner 仅在没有 Owner 的新部署创建。**先完成第 4 节的产物上传和生产依赖安装**，再在服务器可信终端执行以下一次性初始化；不要在前端运行或把密码写入源码：
 
 ```bash
 cd "$RELEASE"
-pnpm install --frozen-lockfile
 read -rp 'Owner email: ' BOOTSTRAP_EMAIL
 read -rsp 'Owner temporary password: ' BOOTSTRAP_PASSWORD
 export BOOTSTRAP_EMAIL BOOTSTRAP_PASSWORD
@@ -112,18 +141,47 @@ JS
 unset BOOTSTRAP_EMAIL BOOTSTRAP_PASSWORD
 ```
 
-## 4. 构建 release
+## 4. 本机构建、上传与安装
 
-在本机或 CI 对固定的源码快照构建，不再次拉取分支。任一步失败停止，不切换当前版本。2GB 生产服务器不要执行本节完整验证命令。
+开发机 Windows PowerShell：确认 `.env.production.local` 已填生产公共配置。任一步失败停止，不上传旧产物，不切换当前版本。完整验证只在准备发布时执行，2GB 生产服务器不要执行。
 
-```bash
-cd "$RELEASE"
+```powershell
 pnpm install --frozen-lockfile
-pnpm exec playwright install --with-deps chromium
-CI=1 pnpm release:check
+if ($LASTEXITCODE) { throw '安装失败' }
+# 本地浏览器测试使用已安装的 Edge；CI 安装 Chromium。
+pnpm release:check
+if ($LASTEXITCODE) { throw '发布验证失败' }
+$releaseName = (git rev-parse HEAD).Trim() + '-' + (Get-Date -Format yyyyMMddHHmmss)
+$archive = Join-Path $env:TEMP "$releaseName.tar.gz"
+tar -czf $archive dist dist-server package.json pnpm-lock.yaml pnpm-workspace.yaml scripts supabase/migrations supabase/config.toml
+if ($LASTEXITCODE) { throw '打包失败' }
+$deployHost = Read-Host 'SSH 用户@服务器'
+scp $archive "${deployHost}:/tmp/"
+if ($LASTEXITCODE) { throw '上传失败' }
+Write-Host "服务器 release 名称：$releaseName"
 ```
 
-生成 `dist/` 和 `dist-server/`。先完成数据库盘点、构建与浏览器验证，再切换版本；数据库与代码需兼容。CLI linked 状态留在该 release 的忽略目录中，不提交到 Git。
+服务器 Bash：输入上一步输出的 release 名称，不带 `.tar.gz`。不复制 `.env`、`node_modules`、CLI token 或 linked 状态。
+
+```bash
+prepare_release() {
+  read -rp 'Release 名称: ' RELEASE_NAME
+  [[ "$RELEASE_NAME" =~ ^[0-9a-f]{40}-[0-9]{14}$ ]] || { echo '名称格式错误'; return 1; }
+  RELEASE="/opt/samstownweb/releases/$RELEASE_NAME"
+  test -f "/tmp/$RELEASE_NAME.tar.gz" || { echo '上传文件不存在'; return 1; }
+  mkdir "$RELEASE" || return 1
+  tar -xzf "/tmp/$RELEASE_NAME.tar.gz" -C "$RELEASE" || return 1
+  cd "$RELEASE" || return 1
+  sudo systemd-run --wait --pipe --collect \
+    --uid="$(id -un)" --working-directory="$RELEASE" \
+    -p CPUQuota=50% -p MemoryMax=448M \
+    "$(command -v pnpm)" install --prod --frozen-lockfile || return 1
+  test -f dist/index.html && test -f dist-server/index.js
+}
+prepare_release
+```
+
+准备函数失败会立即返回，不退出 SSH，也不切换运行版本；须排除错误后再继续。先完成数据库盘点、验证、传输和生产依赖安装，再切换版本。不要更改包依赖声明或生成另一份生产锁文件。
 
 ## 5. Fastify 服务
 
@@ -167,9 +225,13 @@ curl --fail http://127.0.0.1:8787/health
 ```nginx
 server {
     listen 80;
-    server_name yingwutown.top;
+    server_name moesam.com;
     root /opt/samstownweb/current/dist;
     index index.html;
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/css application/javascript application/json image/svg+xml;
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options SAMEORIGIN always;
     add_header Referrer-Policy strict-origin-when-cross-origin always;
@@ -177,6 +239,8 @@ server {
     location / { try_files $uri $uri/ /index.html; }
     location = /index.html { expires -1; }
     location /assets/ { expires 1y; try_files $uri =404; }
+    location /images/optimized/ { expires 1y; try_files $uri =404; }
+    location = /hero-preload.js { expires -1; try_files $uri =404; }
     location ~ ^/(api/|health$) {
         client_max_body_size 52m;
         proxy_request_buffering off;
@@ -193,30 +257,32 @@ server {
 sudo ln -s /etc/nginx/sites-available/samstownweb /etc/nginx/sites-enabled/samstownweb
 sudo nginx -t
 sudo systemctl reload nginx
-sudo certbot --nginx -d yingwutown.top
-curl --fail https://yingwutown.top/health
+sudo certbot --nginx -d moesam.com
+curl --fail https://moesam.com/health
 ```
 
-确保服务账号和 Nginx 可读取 release；环境文件权限保持不变。博客是独立站点，需另设 `blog.yingwutown.top` DNS、Nginx 和证书；网页页脚链接不会替你部署博客。
+确保服务账号和 Nginx 可读取 release；环境文件权限保持不变。博客是独立站点，需另设 `blog.moesam.com` DNS、Nginx 和证书；网页页脚链接不会替你部署博客。
 
 ## 更新、回滚与排错
 
-更新：按第 3 节创建固定版本的 release 并盘点数据库，再执行第 4 节构建；保存 `readlink -f /opt/samstownweb/current` 的旧路径。第 1 节已将父目录授予部署用户，切换链接无需修改环境文件权限。验证成功后：
+更新：在开发机固定新提交，按第 3 节盘点数据库、第 4 节构建和上传；在服务器安装生产依赖。记录 `readlink -f /opt/samstownweb/current` 的旧路径，不覆盖旧 release。确认 `$RELEASE` 指向本次已验证的新目录后：
 
 ```bash
 ln -sfn "$RELEASE" /opt/samstownweb/current
 sudo systemctl restart samstownweb-api
 sudo nginx -t && sudo systemctl reload nginx
-curl --fail https://yingwutown.top/health
+curl --fail https://moesam.com/health
 ```
 
-再验证：首次改密后可立即打开受限页面；首页事务告知最多展示最新 3 篇博客文章；320px 窄屏中英文布局及浅色改密提示正常。
+再验证：首次改密后可立即打开受限页面；首页只展示最新一篇博客文章；公开地图能完整显示项目；后台保存和冲突提示正常；320px 窄屏中英文布局及浅色改密提示正常。
 
-博客默认读取 `https://blog.yingwutown.top/api/public/site-card.json`，Fastify 缓存 5 分钟。服务器需能出站访问博客 HTTPS；更换博客地址使用 `BLOG_API_URL`，重启 API 即可，不需要开放新端口或修改浏览器跨域规则。同步故障查看 API 日志中的 `Blog feed refresh failed`。
+博客默认读取 `https://blog.moesam.com/api/public/site-card.json`，Fastify 缓存 5 分钟。服务器需能出站访问博客 HTTPS；更换博客地址使用 `BLOG_API_URL`，重启 API 即可，不需要开放新端口或修改浏览器跨域规则。同步故障查看 API 日志中的 `Blog feed refresh failed`。
 
 账号门禁迁移 `20261018155301_enforce_profile_password_gate.sql` 不清空数据，按第 3 节盘点后顺序应用。服务保持单 Fastify 进程；扩为多实例前需替换账号更改的进程内串行控制。
 
 v2.2.0 需同步应用 `20261020041649_simplify_roles_and_map_projects.sql`：原 viewer/admin 账号归并为成员，owner 保留为管理；地图标记、项目状态及相关旧 RPC 被删除。现有项目区块和建造者保留。先备份数据库，再在维护窗口按 CLI 顺序迁移并同时切换前后端；旧前端不兼容新 RPC，不能只切换静态文件。角色归并与标记删除不可用简单代码回滚恢复。
+
+v2.2.1 依赖 `20261022124444_audit_integrity_fixes.sql`。先完成迁移，再切换本次前后端；它新增快照／冲突检查、会话失效判据、Storage 归属转移和事务清理队列，不清空业务数据。旧地图提交签名保留，避免共享数据库在切换 API 前中断旧版本。账号重置后的旧会话将被拒绝；服务端请求超时默认为 15 秒，可通过 `SUPABASE_REQUEST_TIMEOUT_MS` 调整。
 
 回滚：将 `current` 指回已保留且兼容当前数据库的旧 release，重启 API。代码回滚不能撤销破坏性数据库迁移。
 
@@ -224,15 +290,16 @@ v2.2.0 需同步应用 `20261020041649_simplify_roles_and_map_projects.sql`：�
 - 登录／后台失败：先检查 `/health`、当前服务工作目录、生产变量及数据库 RLS；不要打印密钥。
 - 页面旧版：检查 Nginx root、`current`、浏览器缓存；`VITE_*` 改后重新构建。
 - 上传失败：核对 52m Nginx 限制、Fastify 文件与解码限制、Storage policy。
-- 清理旧 release 前先核对其绝对路径和回滚用途，使用 `git worktree remove`，不要清空 releases 根目录。
+- 地图提交或密码重置结果不明：先重新读取当前状态并检查 API 日志，不手工删除切片或恢复旧会话；未知提交结果会保留文件，避免破坏已经成功的操作。
+- 清理旧 release 前先核对其绝对路径和回滚用途；产物目录不是 Git worktree，不要清空 releases 根目录。
 
 ## 备份
 
-数据库备份与 Storage 文件必须分别覆盖，并验证可恢复性。可用独立工具 `scripts/backup-current.mjs`：配置见 `.env.example` 的 `BACKUP_*` 与 `PG_*`，需要 PG17+ 客户端、已 linked 的 release、独立验证库、专用目录及独立加密密钥。
+数据库备份与 Storage 文件必须分别覆盖，并验证可恢复性。可用独立工具 `scripts/backup-current.mjs`：配置见 `.env.example` 的 `BACKUP_*` 与 `PG_*`，需要 PG17+ 客户端、Supabase CLI、独立验证库、专用目录及独立加密密钥。产物包不携带 CLI 登录状态；在服务器单独登录并从 release 目录核对项目、执行 `supabase link --project-ref YOUR_PROJECT_REF`，仅使用具有必要备份权限的凭据。
 
 ```bash
 cd /opt/samstownweb/current
 node --env-file=/etc/samstownweb-backup.env scripts/backup-current.mjs
 ```
 
-工具验证隔离库恢复及 Storage 文件校验，不等于生产恢复演练；不要丢失加密密钥。`reset-business-storage.mjs` 和 `retire-storage.mjs` 是破坏性维护工具，不属于发布流程，不要作为更新命令执行。
+工具验证隔离库恢复及 Storage 文件校验，不等于生产恢复演练；不要丢失加密密钥。`reset-business-storage.mjs` 仅适用于删除 QQ、论坛等旧表前的特定历史维护窗口，当前表结构不适用，不能用于日常更新；`retire-storage.mjs` 是它使用的盘点辅助模块，不是独立删除命令。保留其严格目录检查，不为兼容新表结构放宽清空条件。

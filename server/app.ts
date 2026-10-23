@@ -10,6 +10,7 @@ import { authRoutes } from "./routes/auth.js";
 import { bilibiliRoutes } from "./routes/bilibili.js";
 import { blogRoutes } from "./routes/blog.js";
 import { mapRoutes } from "./routes/maps.js";
+import { imageRoutes } from "./routes/images.js";
 import { registerStorageCleanup } from "./storageCleanup.js";
 
 export async function buildApp(options: { logger?: boolean; startWorkers?: boolean } = {}) {
@@ -30,7 +31,7 @@ export async function buildApp(options: { logger?: boolean; startWorkers?: boole
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ZodError) return reply.code(400).send({ code: "error.invalidRequest", details: error.issues.map(issue => ({ path: issue.path.join("."), code: issue.code })) });
     const handledError = error as Error & { code?: string; statusCode?: number };
-    if (handledError.code === "FST_REQ_FILE_TOO_LARGE") return reply.code(413).send({ code: "error.mapFileTooLarge" });
+    if (handledError.code === "FST_REQ_FILE_TOO_LARGE") return reply.code(413).send({ code: "error.fileTooLarge" });
     const status = handledError.statusCode;
     const code = handledError.message?.startsWith("error.") ? handledError.message : null;
     if (status && status >= 400 && status < 600 && (code || status < 500)) {
@@ -47,6 +48,7 @@ export async function buildApp(options: { logger?: boolean; startWorkers?: boole
   await app.register(bilibiliRoutes);
   await app.register(blogRoutes);
   await app.register(mapRoutes);
+  await app.register(imageRoutes);
   if (options.startWorkers !== false) {
     registerStorageCleanup(app);
     registerAccountCleanup(app);
