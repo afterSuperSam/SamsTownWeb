@@ -60,6 +60,7 @@ pnpm test:e2e
 
 ## 部署与安全
 
+- v2.2.4 将 Fastify 固定到 5.12.6，并将传递依赖 ip-address 覆盖为 10.7.4，修复请求头校验与 IPv6 区域标识解析安全问题；无新增迁移或功能变化。
 - Ubuntu / Nginx / systemd；环境文件放 `/etc/samstownweb.env`，运行版本由 `/opt/samstownweb/current` 指向，服务名 `samstownweb-api`。
 - 2GB 新服务器采用本机构建 `dist/`、`dist-server/`，服务器保留同一提交的 `package.json`、`pnpm-lock.yaml`、`pnpm-workspace.yaml`，执行 `pnpm install --prod --frozen-lockfile`。不要删除开发依赖声明或重新生成生产锁文件，也不要在生产机跑完整检查。
 - `VITE_*` 会进入浏览器包；Service Role Key 只能用于 Fastify。授权由服务端和数据库 RLS 执行。
