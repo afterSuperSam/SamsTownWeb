@@ -2,7 +2,9 @@
   color-scheme:dark;
   color:#f0e4d1;
   background:#211c18;
-  font-family:"Noto Sans SC",system-ui,sans-serif;
+  --font-body:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-heading:Georgia,"Times New Roman",var(--font-body);
+  font-family:var(--font-body);
   font-synthesis:none;
   --bg:#211c18;
   --surface:#2a241f;
@@ -59,7 +61,7 @@
   --hero-gradient:linear-gradient(90deg,rgba(27,20,16,.94),rgba(27,20,16,.5) 56%,rgba(27,20,16,.12));
   --home-hero-shade:linear-gradient(180deg,rgba(27,20,16,.55),rgba(27,20,16,.12) 30%,rgba(27,20,16,.32));
   --hero-mask:radial-gradient(ellipse 100% 100% at 50% 0%,#000 55%,rgba(0,0,0,.8) 70%,transparent 100%);
-  --hero-mobile-position:32% center;
+  --hero-mobile-position:center;
   --radius:22px;
   --yingwu-glow:rgba(233,164,58,.3);
   --yingwu-line:rgba(226,190,126,.16);
@@ -204,7 +206,7 @@ button:disabled { cursor:not-allowed; opacity:.45; }
 img { display:block; max-width:100%; }
 h1,h2,h3,p { margin-top:0; }
 h1,h2 { letter-spacing:-.035em; }
-h1 { font-family:"Playfair Display","Noto Sans SC",serif; }
+h1 { font-family:var(--font-heading); }
 p { line-height:1.75; }
 
 .site-header { height:76px; display:flex; align-items:center; gap:42px; padding:0 clamp(20px,5vw,72px); }

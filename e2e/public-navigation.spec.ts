@@ -4,7 +4,7 @@ test("homepage hero opens while secondary data is still pending", async ({ page 
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.route("**/api/site/hero?area=hero", route => route.fulfill({
+  await page.route("**/fixture-hero.webp", route => route.fulfill({
     contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080"><path fill="#d38d42" d="M0 0h1920v1080H0z"/></svg>'
   }));
   await page.route("**/src/services/siteRepository.ts*", route => route.fulfill({
@@ -15,7 +15,7 @@ test("homepage hero opens while secondary data is still pending", async ({ page 
       export const getBlogPosts = async () => [];
       const delayed = value => new Promise(resolve => window.addEventListener("release-home-data", () => resolve(value), { once: true }));
       export const getHomeData = () => ({
-        images: delayed([]), members: delayed([]),
+        images: Promise.resolve([{ id: "hero", area: "hero", mediaType: "image", visible: true, sourceUrl: "/fixture-hero.webp" }]), members: delayed([]),
         faqs: delayed([{ id: "delayed-faq", questionZh: "延迟返回的问题", questionEn: "Delayed FAQ", answerZh: "异步补齐", answerEn: "Loaded", visible: true, sortOrder: 0 }])
       });
     `
@@ -28,6 +28,81 @@ test("homepage hero opens while secondary data is still pending", async ({ page 
   await page.evaluate(() => window.dispatchEvent(new Event("release-home-data")));
   await expect(page.getByText("延迟返回的问题")).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+test("mobile hero stays centered and late fonts do not change visible lettering", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.route("**/src/services/siteRepository.ts*", route => route.fulfill({ contentType: "application/javascript", body: `
+    import { defaultContent } from "/src/domain/defaults.ts";
+    export const getSiteContent = async () => defaultContent;
+    export const preloadHomeData = () => {};
+    export const getBlogPosts = async () => [];
+    export const getHomeData = () => ({ images: Promise.resolve([{ id: "hero", area: "hero", mediaType: "image", visible: true,
+      sourceUrl: "/favicon.webp" }]), members: Promise.resolve([]), faqs: Promise.resolve([]) });
+  ` }));
+  let releaseFonts!: () => void;
+  const fontsReady = new Promise<void>(resolve => { releaseFonts = resolve; });
+  await page.route(/\.(woff2?|ttf|otf)(\?.*)?$/, async route => {
+    await fontsReady;
+    await route.continue();
+  });
+  try {
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await expect(page.locator(".hero h1")).toBeVisible();
+    await expect(page.locator(".site-initial-load")).toHaveCount(0);
+    const before = await page.evaluate(() => {
+      const sample = document.createElement("span");
+      sample.id = "font-stability-probe";
+      sample.textContent = "Yingwu Town 楹雾镇 0123456789";
+      sample.style.cssText = "position:fixed;top:100px;left:0;font-size:20px;white-space:nowrap";
+      document.body.append(sample);
+      return { width: sample.getBoundingClientRect().width, fonts: [...new Set([...document.fonts].map(font => `${font.family}:${font.display}`))] };
+    });
+    releaseFonts();
+    await page.evaluate(() => document.fonts.ready);
+    const width = await page.locator("#font-stability-probe").evaluate(element => element.getBoundingClientRect().width);
+    expect.soft(width, JSON.stringify(before.fonts)).toBeCloseTo(before.width, 1);
+    await expect(page.locator(".hero img")).toHaveCSS("object-position", "50% 50%");
+  } finally {
+    releaseFonts();
+  }
+});
+
+test("public copy and hero start before the application module without the API redirect", async ({ page }) => {
+  let releaseApplication!: () => void;
+  const applicationReady = new Promise<void>(resolve => { releaseApplication = resolve; });
+  let copyRequested = false;
+  let heroRequested = false;
+  let heroRedirects = 0;
+  await page.route("http://127.0.0.1:5174/", async route => {
+    const response = await route.fetch();
+    const html = (await response.text()).replace(/data-supabase-url="[^"]*"/, 'data-supabase-url="https://fixture.supabase.co"')
+      .replace(/data-anon-key="[^"]*"/, 'data-anon-key="fixture-public-key"');
+    await route.fulfill({ response, body: html });
+  });
+  await page.route("**/src/main.tsx*", async route => { await applicationReady; await route.continue(); });
+  await page.route("https://fixture.supabase.co/rest/v1/site_content?**", route => {
+    copyRequested = true;
+    return route.fulfill({ json: [{ content: { translations: {}, settings: {} } }] });
+  });
+  await page.route("https://fixture.supabase.co/rest/v1/town_images?**", route => route.fulfill({ json: [{
+    id: "early-hero", area: "hero", media_type: "image", is_visible: true,
+    source_url: "https://fixture.supabase.co/storage/v1/object/public/site-images/hero/fixture.display/1080.webp"
+  }] }));
+  await page.route("**/api/site/hero?**", route => { heroRedirects += 1; return route.abort(); });
+  await page.route("**/storage/v1/object/public/site-images/hero/**", route => {
+    heroRequested = true;
+    return route.fulfill({ contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" />' });
+  });
+  try {
+    await page.goto("/", { waitUntil: "commit" });
+    await expect.poll(() => copyRequested).toBe(true);
+    await expect.poll(() => heroRequested).toBe(true);
+    expect(heroRedirects).toBe(0);
+  } finally {
+    releaseApplication();
+  }
 });
 
 test("late initial session does not cover public content again after its deadline", async ({ page }) => {

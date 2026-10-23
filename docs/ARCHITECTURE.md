@@ -23,7 +23,7 @@ React repository ── Supabase Data API / RPC / Realtime（RLS）
 
 状态使用 Context 与页面自身状态，不引入额外状态框架。页面不直接拼数据库查询；表字段映射集中于 repository，JSON RPC 在数据边界校验。
 
-图片处理集中在 `server/siteImages.ts`，尺寸与质量由 `server/config.ts` 校验；上传和存量优化脚本共用 Sharp。`storage_path` 始终指原图，展示文件位于 `<storage_path>.display/720.webp`、`1080.webp`，无新增表。`TownImage` 按用途选尺寸，默认懒加载及异步解码。`public/hero-preload.js` 独立于 React 包，提前访问公开头图重定向；只读取可见图片，短缓存 30 秒。首页媒体、成员、FAQ 独立补齐，首屏不再等待完整资料集合；权限页仍由 ProtectedRoute 等待身份验证。
+图片处理集中在 `server/siteImages.ts`，尺寸与质量由 `server/config.ts` 校验；上传和存量优化脚本共用 Sharp。`storage_path` 始终指原图，展示文件位于 `<storage_path>.display/720.webp`、`1080.webp`，无新增表。`TownImage` 按用途选尺寸，默认懒加载及异步解码。`public/site-init.js` 在 React 前恢复主题，并行读取公开文案和可见媒体，找到当前页头图便直接预取，不经过 Fastify 重定向。公开密钥请求仍依赖 RLS，repository 一次性接管结果并合并并发读取；后台不消费公开预取，独立读取完整最新资料。首页只查询选中的 4 位成员，档案和后台继续读取完整快照；成员、FAQ 不参与头图就绪判断。权限页仍由 ProtectedRoute 等待身份验证。
 
 ## 核心数据
 
@@ -72,7 +72,7 @@ HTTP JSON 使用 camelCase；数据库 snake_case 在 repository 转换。错误
 | `--text` | `#f0e4d1` | `#3a2a1d` |
 | `--amber` | `#d38d42` | `#8a4d20` |
 
-变量统一在 `styles/global.css` 的 `:root`。正文使用 Noto Sans SC／系统字体，一级标题使用 Playfair Display，天数通过 `--counter-font` 使用 Georgia 粗体，页脚版本号通过 `--font-handwriting` 使用 SamsBlog 的 Segoe Print／楷体／微软雅黑字体栈；中文不使用像素字体。文字继承主题阴影，浅色使用深棕投影而非白色高光，媒体标题保留专用阴影；导航和签名光晕使用独立亮色变量。大圆角、柔和阴影和留白形成层级。
+变量统一在 `styles/global.css` 的 `:root`。正文通过 `--font-body` 使用本机系统字体、苹方、微软雅黑；一级标题通过 `--font-heading` 使用 Georgia，中文继承正文栈。不依赖远程字体或加载后的字体替换。天数通过 `--counter-font` 使用 Georgia 粗体，页脚版本号通过 `--font-handwriting` 使用 SamsBlog 的系统手写字体栈。文字继承主题阴影，浅色使用深棕投影，媒体标题保留专用阴影；导航和签名光晕使用独立亮色变量。
 
 - **按钮**：复用 `Button`／`IconButton`／`SaveButton`，无装饰外框；用文字变色、聚光、微缩放、按压和键盘焦点表达状态。危险操作保留危险色与确认。
 - **表单**：输入、复选框和文件按钮共用主题样式；`SelectField` 用顶层弹出菜单统一选项外观，支持搜索、方向键、Escape 与焦点恢复；`Dialog` 统一模态隔离及动作区。

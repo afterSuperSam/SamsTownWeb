@@ -86,6 +86,8 @@ pnpm dlx supabase@2.109.1 gen types typescript --linked > src/lib/database.types
 
 v2.2.2 的图片与首屏优化不需要新迁移。部署时先更新 Fastify，再更新前端，确保 `/api/site/hero` 和 `/api/site/images` 可用；不要仅上传静态文件。Nginx 应启用下文的 gzip 与静态图片缓存，WebP 无需再次 gzip。`SITE_IMAGE_WEBP_QUALITY` 默认 90；上传请求等待时间由 `VITE_IMAGE_UPLOAD_TIMEOUT_MS` 控制，默认 120 秒。
 
+v2.2.3 在上述后端不变的基础上更新前端，无需迁移。完整替换 `dist`，保留其中的 `site-init.js`，它替代旧的 `theme-init.js` 和 `hero-preload.js`。该脚本必须随版本重新验证缓存，不应设置一年缓存。文案和媒体直接通过 Supabase 公开只读 API 预取，头图不再依赖 Fastify 地址查询；构建时的 `VITE_SUPABASE_URL`、`VITE_SUPABASE_ANON_KEY` 必须正确，不能填入服务端密钥。无需 Google Fonts 域名；正文使用本机字体。
+
 已有图片的优化在可信开发机执行，先查看测量结果再应用。脚本共用上传处理，不删除原图；原引用与结果写到系统临时目录并打印路径，需留存以便回溯。本次已有云端展示图已完成转换，不需要重复执行。打包时带上 `images/optimized` 生成的两档 WebP（构建会复制到 `dist`）；本地旧路径无需改数据库。
 
 ```powershell
@@ -240,7 +242,7 @@ server {
     location = /index.html { expires -1; }
     location /assets/ { expires 1y; try_files $uri =404; }
     location /images/optimized/ { expires 1y; try_files $uri =404; }
-    location = /hero-preload.js { expires -1; try_files $uri =404; }
+    location = /site-init.js { expires -1; try_files $uri =404; }
     location ~ ^/(api/|health$) {
         client_max_body_size 52m;
         proxy_request_buffering off;

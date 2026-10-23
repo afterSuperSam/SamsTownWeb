@@ -10,11 +10,6 @@ import { ThemeProvider } from "./theme/ThemeContext";
 import { preloadHomeData } from "./services/siteRepository";
 import "./styles/polish.css";
 
-// 外部字体加载完成后再启用，避免字体服务阻塞本地及生产首屏。
-const fontStyles = document.getElementById("site-fonts") as HTMLLinkElement;
-if (fontStyles.sheet) fontStyles.media = "all";
-else fontStyles.addEventListener("load", () => { fontStyles.media = "all"; }, { once: true });
-
 // 首页数据与会话、文案并行读取；页面挂载时复用这一次读取。
 if (window.location.pathname === import.meta.env.BASE_URL) preloadHomeData();
 

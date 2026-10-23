@@ -134,7 +134,7 @@
   bottom:17px;
   left:20px;
   color:#fff4df;
-  font-family:"Noto Sans SC",system-ui,sans-serif;
+  font-family:var(--font-body);
   font-size:clamp(12px,1.1vw,15px);
   font-weight:620;
   line-height:1.55;

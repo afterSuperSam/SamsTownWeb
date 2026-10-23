@@ -5,19 +5,27 @@ vi.mock("../lib/supabase", () => ({ isSupabaseConfigured: true, supabase: {
   auth: { getSession: mocks.session, setSession: mocks.setSession }, from: mocks.from, rpc: mocks.rpc
 } }));
 import { authenticatedApiRequest, publicApiRequest } from "./apiClient";
-import { getHomeData, getSiteBundle, getTownImages, getTownMembers, replaceMembers, uploadTownImage } from "./siteRepository";
+import { getHomeData, getSiteContent, getSiteBundle, getTownImages, getTownMembers, preloadHomeData, replaceMembers, uploadTownImage } from "./siteRepository";
 import { formatTranslation, type TranslationKey } from "../i18n/translations";
 import { changeOwnPassword, getCurrentProfile, updateAccountDetails } from "./authService";
 
 beforeEach(() => { vi.resetAllMocks(); mocks.session.mockResolvedValue({ data: { session: null } }); });
-afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+function rowsQuery(rows: Record<string, unknown>[]) {
+  const result = Promise.resolve({ data: rows, error: null });
+  const query = { then: result.then.bind(result), order: vi.fn(), eq: vi.fn(), limit: vi.fn() };
+  query.order.mockReturnValue(query); query.eq.mockReturnValue(query); query.limit.mockReturnValue(query);
+  return query;
+}
+
 describe("request and media boundaries", () => {
   it("keeps public content available after copy failure without allowing an admin fallback save", async () => {
     const contentError = new Error("site copy unavailable");
     const readContent = vi.fn().mockResolvedValue({ data: null, error: contentError });
     mocks.from.mockImplementation(table => table === "site_content"
       ? { select: () => ({ eq: () => ({ maybeSingle: readContent }) }) }
-      : { select: () => ({ order: async () => ({ data: [], error: null }) }) });
+      : { select: () => rowsQuery([]) });
     mocks.rpc.mockResolvedValue({ data: { items: [], revision: "read-version" }, error: null });
     await expect(getSiteBundle()).resolves.toMatchObject({ members: [], images: [], faqs: [], content: { settings: { qqGroup: expect.any(String) } } });
     await getSiteBundle();
@@ -51,10 +59,9 @@ describe("request and media boundaries", () => {
   });
   it("keeps retired media in Other with valid editable categories and translations", async () => {
     const areas = ["hero", "story", "gallery", "join", "history", "mapHero", "other", "forumHero", "resources", "materialHero"];
-    mocks.from.mockReturnValue({ select: () => ({ order: async () => ({
-      data: areas.map((area, index) => ({ id: String(index), area, source_url: `image-${index}.webp`, layout: index === 9 ? "retired" : "wide" })),
-      error: null
-    }) }) });
+    mocks.from.mockReturnValue({ select: () => rowsQuery(
+      areas.map((area, index) => ({ id: String(index), area, source_url: `image-${index}.webp`, layout: index === 9 ? "retired" : "wide" }))
+    ) });
     const images = await getTownImages();
     expect(images).toHaveLength(areas.length);
     expect(images.map(image => image.area)).toEqual([...areas.slice(0, 5), "other", "other", "other", "other", "other"]);
@@ -168,10 +175,51 @@ describe("request and media boundaries", () => {
     expect(send).toHaveBeenCalledWith("http://fixture.local/api/site/images", expect.objectContaining({ method: "POST", body: expect.any(FormData) }));
     expect(mocks.from).not.toHaveBeenCalled();
   });
+  it("retains completed preloads until the homepage consumes them", async () => {
+    const query = rowsQuery([]);
+    mocks.from.mockReturnValue({ select: () => query });
+    mocks.rpc.mockResolvedValue({ data: { items: [], revision: "fixture" }, error: null });
+    preloadHomeData();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await Promise.all(Object.values(getHomeData()));
+    expect(mocks.from).toHaveBeenCalledTimes(2);
+    expect(mocks.rpc).toHaveBeenCalledTimes(1);
+    expect(query.eq).toHaveBeenCalledWith("show_on_home", true);
+    expect(query.limit).toHaveBeenCalledWith(4);
+  });
   it("exposes homepage images even while member and FAQ requests are pending", async () => {
-    mocks.from.mockReturnValue({ select: () => ({ order: async () => ({ data: [{ id: "hero", area: "hero", source_url: "hero.webp" }], error: null }) }) });
+    const query = rowsQuery([{ id: "hero", area: "hero", source_url: "hero.webp" }]);
+    const pendingMembers = rowsQuery([]);
+    pendingMembers.limit.mockReturnValue(new Promise(() => {}));
+    mocks.from.mockImplementation(table => ({ select: () => table === "town_members" ? pendingMembers : query }));
     mocks.rpc.mockReturnValue(new Promise(() => {}));
     const requests = getHomeData();
     await expect(requests.images).resolves.toMatchObject([{ id: "hero" }]);
+    preloadHomeData();
+    expect(getHomeData()).toBe(requests);
+    expect(mocks.from).toHaveBeenCalledTimes(2);
+    expect(mocks.rpc).toHaveBeenCalledTimes(1);
+  });
+  it("shares early media between public readers without hiding media from the editor", async () => {
+    vi.stubGlobal("window", { __yingwuImages: Promise.resolve([{ id: "early", area: "hero", source_url: "hero.webp" }]) });
+    const first = getTownImages({ forDisplay: true });
+    expect(getTownImages({ forDisplay: true })).toBe(first);
+    await expect(first).resolves.toMatchObject([{ id: "early" }]);
+    expect(mocks.from).not.toHaveBeenCalled();
+    const query = rowsQuery([{ id: "hidden", area: "other", is_visible: false }]);
+    mocks.from.mockReturnValue({ select: () => query });
+    await expect(getTownImages()).resolves.toMatchObject([{ id: "hidden", visible: false }]);
+    expect(query.eq).not.toHaveBeenCalled();
+    await getTownImages({ forDisplay: true });
+    expect(query.eq).toHaveBeenCalledWith("is_visible", true);
+  });
+  it("consumes early public copy once and reads fresh copy for later edits", async () => {
+    const early = { translations: {}, settings: { qqGroup: "early" } };
+    vi.stubGlobal("window", { __yingwuContent: Promise.resolve(early) });
+    await expect(getSiteContent()).resolves.toMatchObject(early);
+    expect(mocks.from).not.toHaveBeenCalled();
+    mocks.from.mockReturnValue({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { content: { settings: { qqGroup: "fresh" } } }, error: null }) }) }) });
+    await expect(getSiteContent()).resolves.toMatchObject({ settings: { qqGroup: "fresh" } });
+    expect(mocks.from).toHaveBeenCalledOnce();
   });
 });

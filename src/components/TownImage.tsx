@@ -17,15 +17,19 @@ export function resolveTownImageSource(path: string, variant: "hero" | "content"
 }
 
 // 关键图片先解码再结束加载；超时或图片失效不阻塞页面。
-export async function preloadTownImage(path: string): Promise<void> {
-  if (!path) return;
-  const image = new Image();
-  image.fetchPriority = "high";
-  image.src = resolveTownImageSource(path, "hero");
+export async function preloadTownImage(source: string | Promise<string>): Promise<void> {
+  const decode = async () => {
+    const path = await source;
+    if (!path) return;
+    const image = new Image();
+    image.fetchPriority = "high";
+    image.src = resolveTownImageSource(path, "hero");
+    await image.decode();
+  };
   let timeout = 0;
   try {
     await Promise.race([
-      image.decode(),
+      decode(),
       new Promise<void>(resolve => { timeout = window.setTimeout(resolve, visualConfig.heroDecodeTimeoutMilliseconds); })
     ]);
   } catch {

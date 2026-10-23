@@ -62,7 +62,7 @@ export const visualConfig = visualConfigSchema.parse({
   loadingSignature: {
     durationMilliseconds: 1600, strokePauseMilliseconds: 0, easing: "cubic-bezier(.55,0,1,1)",
     continuous: true,
-    exitMilliseconds: 640, exitScale: 1.06, exitFadeStart: .35
+    exitMilliseconds: 500, exitScale: 1.06, exitFadeStart: 0
   },
   themeRipple: { durationMilliseconds: 720, featherPixels: 90 },
   select: { searchThreshold: 8, maximumHeight: 300, viewportMargin: 12 },

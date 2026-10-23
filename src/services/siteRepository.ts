@@ -32,7 +32,8 @@ export interface SiteBundle {
 let cachedSiteContent: SiteContent | null = null;
 let contentRequest: Promise<SiteContent> | null = null;
 let bundleRequest: Promise<SiteBundle> | null = null;
-let initialHomeRequests: ReturnType<typeof loadHomeData> | null = null;
+let homeRequests: ReturnType<typeof loadHomeData> | null = null;
+let publicImagesRequest: Promise<TownImage[]> | null = null;
 
 type EditableCollection = "town_members" | "town_history" | "faq_items";
 const collectionRevisions = new Map<EditableCollection, { revision: string | null }>();
@@ -102,6 +103,12 @@ export function getSiteContent(): Promise<SiteContent> {
 
 async function loadSiteContent(): Promise<SiteContent> {
   if (!isSupabaseConfigured) return structuredClone(defaultContent);
+  const initialContent = typeof window !== "undefined" ? window.__yingwuContent : undefined;
+  if (initialContent) {
+    delete window.__yingwuContent;
+    cachedSiteContent = normalizeSiteContent(await initialContent);
+    return structuredClone(cachedSiteContent);
+  }
   const { data, error } = await supabase.from("site_content").select("content").eq("id", 1).maybeSingle();
   if (error) {
     cachedSiteContent ??= structuredClone(defaultContent);
@@ -111,12 +118,23 @@ async function loadSiteContent(): Promise<SiteContent> {
   return structuredClone(cachedSiteContent);
 }
 
-export async function getTownImages(area?: TownImage["area"]): Promise<TownImage[]> {
-  if (!isSupabaseConfigured) {
-    return defaultImages.filter(image => !area || image.area === area);
+export function getTownImages(options: { forDisplay?: boolean } = {}): Promise<TownImage[]> {
+  if (options.forDisplay) {
+    return publicImagesRequest ??= loadTownImages(true).finally(() => { publicImagesRequest = null; });
   }
-  let query = supabase.from("town_images").select("*").order("sort_order");
-  if (area) query = query.eq("area", area);
+  return loadTownImages(false);
+}
+
+// 公开预取只交给展示页；后台始终读取完整、新鲜的媒体资料。
+async function loadTownImages(forDisplay: boolean): Promise<TownImage[]> {
+  if (!isSupabaseConfigured) return defaultImages;
+  const initialImages = forDisplay && typeof window !== "undefined" ? window.__yingwuImages : undefined;
+  if (initialImages) {
+    delete window.__yingwuImages;
+    return (await initialImages).map(mapImage);
+  }
+  let query = supabase.from("town_images").select("*").order("sort_order").order("id");
+  if (forDisplay) query = query.eq("is_visible", true);
   const { data, error } = await query;
   if (error) throw error;
   return (data ?? []).map(mapImage);
@@ -128,7 +146,7 @@ export async function getTownMembers(options: { forEditing?: boolean } = {}): Pr
 }
 
 export async function getTownArchive(): Promise<{ members: TownMember[]; history: HistoryEvent[]; images: TownImage[] }> {
-  const [members, history, images] = await Promise.all([getTownMembers(), getTownHistory(), getTownImages()]);
+  const [members, history, images] = await Promise.all([getTownMembers(), getTownHistory(), getTownImages({ forDisplay: true })]);
   return { members, history, images };
 }
 
@@ -140,22 +158,34 @@ export async function getTownHistory(options: { forEditing?: boolean } = {}): Pr
 
 // 并行加载站点数据；数据库异常直接交给界面错误处理。
 export function preloadHomeData(): void {
-  initialHomeRequests ??= loadHomeData();
-  for (const request of Object.values(initialHomeRequests)) void request.catch(() => undefined);
+  homeRequests ??= loadHomeData();
+  for (const request of Object.values(homeRequests)) void request.catch(() => undefined);
 }
 
 function loadHomeData() {
   return {
-    images: getTownImages(),
-    members: getTownMembers(),
+    images: getTownImages({ forDisplay: true }),
+    members: getFeaturedMembers(),
     faqs: isSupabaseConfigured ? readCollection("faq_items").then(rows => rows.map(mapFaq)) : Promise.resolve(defaultFaqs)
   };
 }
 
+// 首页只取已选成员；完整名单与编辑快照仍走原有读取流程。
+async function getFeaturedMembers(): Promise<TownMember[]> {
+  if (!isSupabaseConfigured) return defaultMembers;
+  const { data, error } = await supabase.from("town_members").select("*")
+    .eq("show_on_home", true).order("sort_order").order("id").limit(MAX_HOME_MEMBERS);
+  if (error) throw error;
+  return (data ?? []).map(mapMember);
+}
+
 // 首页按区域接收数据；非首屏请求不参与头图就绪判断。
 export function getHomeData() {
-  const requests = initialHomeRequests ?? loadHomeData();
-  initialHomeRequests = null;
+  const requests = homeRequests ??= loadHomeData();
+  // 保留预取结果直到页面消费；并发挂载共享，消费完成后再释放。
+  void Promise.allSettled(Object.values(requests)).then(() => {
+    if (homeRequests === requests) homeRequests = null;
+  });
   return requests;
 }
 

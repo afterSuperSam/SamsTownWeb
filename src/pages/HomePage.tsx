@@ -25,7 +25,6 @@ import { useScrollReveal } from "../hooks/useScrollReveal";
 import { getErrorTranslationKey } from "../i18n/errors";
 import { useI18n } from "../i18n/I18nContext";
 import { safeExternalUrl } from "../lib/externalUrl";
-import { env } from "../lib/env";
 import { getTownAgeDays } from "../lib/townAge";
 import { getBlogPosts, getHomeData, type SiteBundle } from "../services/siteRepository";
 
@@ -103,10 +102,11 @@ export function HomePage() {
     void requests.faqs.then(faqs => {
       if (revision === siteRevision.current) setData(current => ({ ...current, faqs }));
     }).catch(fail);
-    void requests.images.then(images => {
+    const heroSource = requests.images.then(images => {
       if (revision === siteRevision.current) setData(current => ({ ...current, images }));
-    }).catch(fail);
-    await preloadTownImage(`${env.VITE_API_URL}/api/site/hero?area=hero`);
+      return images.find(image => image.visible && image.area === "hero" && image.mediaType === "image")?.sourceUrl ?? "";
+    }).catch(error => { fail(error); return ""; });
+    await preloadTownImage(heroSource);
     if (revision === siteRevision.current) {
       reportLoading();
       setSiteReady(true);
@@ -161,16 +161,16 @@ export function HomePage() {
       ) : null}
 
       <section className="hero page-hero" id="home">
-        <div className="page-hero-media">
+        {imagesByArea.hero ? <div className="page-hero-media">
           <TownImageAsset
             className="page-hero-image"
             variant="hero"
-            source={imagesByArea.hero?.sourceUrl ?? `${env.VITE_API_URL}/api/site/hero?area=hero`}
-            alt={imagesByArea.hero ? localizedImageText(imagesByArea.hero, "alt", language) : t("home.hero.title")}
+            source={imagesByArea.hero.sourceUrl}
+            alt={localizedImageText(imagesByArea.hero, "alt", language)}
             loading="eager"
             fetchPriority="high"
           />
-        </div>
+        </div> : null}
         <div className="page-hero-shade" />
         <div className="hero-copy hero-copy-sequence">
           <StaggeredText as="span" className="eyebrow" language={language} startDelay={100} step={34} text={t("home.hero.eyebrow")} />
