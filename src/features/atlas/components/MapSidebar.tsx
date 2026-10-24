@@ -35,6 +35,8 @@ export function MapSidebar(props: MapSidebarProps) {
   const visible = result?.key === listKey ? result.value : null;
   const projects = visible?.projects ?? [];
   const loading = !visible && !error;
+  const total = result?.key.startsWith(`${scopeKey}:`) ? result.value.total : null;
+  const pageCount = Math.ceil((total ?? 0) / atlasConfig.listPageSize);
 
   useEffect(() => {
     if (previousScope.current !== scopeKey) {
@@ -73,7 +75,7 @@ export function MapSidebar(props: MapSidebarProps) {
 
   return (
     <aside className="map-sidebar" aria-label={t("map.sidebar.claims")}>
-      <div className="map-project-list-heading"><Shapes size={18} /><h2>{t("map.sidebar.claims")}</h2><span>{visible?.total ?? "…"}</span></div>
+      <div className="map-project-list-heading"><Shapes size={18} /><h2>{t("map.sidebar.claims")}</h2><span>{total ?? "…"}</span></div>
       <div className="map-sidebar-list">
         {projects.map(project => (
           <article
@@ -99,11 +101,11 @@ export function MapSidebar(props: MapSidebarProps) {
       </div>
       {loading ? <p className="map-list-empty" role="status">{t("app.loading.terrain")}</p> : null}
       {error ? <Notice>{t(getErrorTranslationKey(error))}<Button type="button" className="secondary small" onClick={() => setRetryRevision(value => value + 1)}>{t("app.retry")}</Button></Notice> : null}
-      <nav className="map-list-pagination" aria-label={t("map.sidebar.pagination")}>
+      {pageCount > 1 ? <nav className="map-list-pagination" aria-label={t("map.sidebar.pagination")}>
         <Button type="button" className="secondary small" disabled={loading || effectivePage === 0} onClick={() => setPage(value => value - 1)}>{t("map.sidebar.previous")}</Button>
-        <span role="status">{t("map.sidebar.total")} {visible?.total ?? "…"} · {effectivePage + 1} / {visible ? Math.max(1, Math.ceil(visible.total / atlasConfig.listPageSize)) : "…"}</span>
+        <span role="status">{t("map.sidebar.page", { page: effectivePage + 1, pages: pageCount })}</span>
         <Button type="button" className="secondary small" disabled={!visible || (effectivePage + 1) * atlasConfig.listPageSize >= visible.total} onClick={() => setPage(value => value + 1)}>{t("map.sidebar.next")}</Button>
-      </nav>
+      </nav> : null}
     </aside>
   );
 }

@@ -128,7 +128,7 @@ export function AccountsPanel({ currentUserId, onNotice }: AccountsPanelProps) {
       </header>
       {loadError ? <Notice className="account-service-state"><span>{loadError}</span><Button type="button" className="secondary small" onClick={() => void refresh()}>{t("app.retry")}</Button></Notice> : null}
       <form className="panel account-form" onSubmit={submit}>
-        <input aria-label={t("app.username")} placeholder={t("app.username")} value={form.username} onChange={event => setForm({ ...form, username: event.target.value })} minLength={2} maxLength={32} pattern="[\p{L}\p{N}_-]+" required />
+        <input aria-label={t("app.username")} placeholder={t("app.username")} value={form.username} onChange={event => setForm({ ...form, username: event.target.value })} pattern="[\p{L}\p{Nd}_\-]{2,32}" required />
         <input type="password" minLength={10} aria-label={t("admin.accounts.tempPassword")} placeholder={t("admin.accounts.tempPassword")} value={form.password} onChange={event => setForm({ ...form, password: event.target.value })} required />
         <SelectField value={form.role} label={t("app.role")} options={managedRoles.map(role => ({ value: role, label: t(roleLabels[role]) }))} onChange={role => setForm({ ...form, role })} />
         <Button type="submit" className="primary" disabled={busyId === "create" || Boolean(loadError)}><Plus size={17} />{t("admin.accounts.create")}</Button>

@@ -455,7 +455,7 @@ function ProfilePanel({ username, refreshProfile, onNotice }: {
     <div>
       <header className="admin-heading"><div><h2>{t("admin.profile.title")}</h2><p>{t("admin.profile.body")}</p></div></header>
       <form className="profile-form form-stack" onSubmit={submit}>
-        <label>{t("app.username")}<input minLength={2} maxLength={32} disabled={busy} value={form.username} onChange={event => setForm({ ...form, username: event.target.value })} required /></label>
+        <label>{t("app.username")}<input pattern="[\p{L}\p{Nd}_\-]{2,32}" disabled={busy} value={form.username} onChange={event => setForm({ ...form, username: event.target.value })} required /></label>
         <label>{t("admin.profile.newPassword")}<input type="password" minLength={10} disabled={busy} placeholder={t("admin.profile.passwordHint")} value={form.password} onChange={event => setForm({ ...form, password: event.target.value })} /></label>
         <SaveButton type="submit" busy={busy}>{t("admin.profile.save")}</SaveButton>
       </form>

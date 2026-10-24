@@ -2,13 +2,14 @@ import { Link, Navigate, Outlet } from "react-router";
 import { can, type Capability } from "../domain/permissions";
 import { useI18n } from "../i18n/I18nContext";
 import { useAuth } from "../state/AuthContext";
+import { PageLoading } from "./TerrainLoading";
 
 // Capability guards keep route access independent from role ordering.
 export function ProtectedRoute({ capability }: { capability: Capability }) {
   const { user, profile, loading } = useAuth();
   const { t } = useI18n();
 
-  if (loading) return <div className="screen-message">{t("app.loading.auth")}</div>;
+  if (loading) return <PageLoading label={t("app.loading.auth")} />;
   if (!user) return <Navigate to="/account" replace />;
   if (profile?.mustChangePassword) {
     return <div className="screen-message">{t("error.passwordChangeRequired")}</div>;

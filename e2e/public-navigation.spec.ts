@@ -69,6 +69,33 @@ test("mobile hero stays centered and late fonts do not change visible lettering"
   }
 });
 
+test("initial copy deadline releases the homepage without a late text replacement", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.route("**/src/services/siteRepository.ts*", route => route.fulfill({ contentType: "application/javascript", body: `
+    import { defaultContent } from "/src/domain/defaults.ts";
+    const content = new Promise(resolve => window.addEventListener("release-copy", () => resolve({
+      ...defaultContent, translations: { "home.hero.title": { "zh-CN": "主动重试后的标题", en: "Updated title" } }
+    }), { once: true }));
+    export const getSiteContent = () => content;
+    export const preloadHomeData = () => {};
+    export const getBlogPosts = async () => [];
+    export const getHomeData = () => ({ images: Promise.resolve([]), members: Promise.resolve([]), faqs: Promise.resolve([]) });
+  ` }));
+  await page.goto("/");
+  await expect(page.locator(".hero h1")).toHaveText("楹雾镇");
+  await expect(page.locator(".site-initial-load")).toHaveCount(0);
+  await expect(page.locator(".initial-home-content")).toHaveJSProperty("inert", false);
+  await expect(page.locator(".site-load-notice")).toBeVisible();
+  await page.evaluate(async () => {
+    window.dispatchEvent(new Event("release-copy"));
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  await expect(page.locator(".hero h1")).toHaveText("楹雾镇");
+  await page.locator(".site-load-notice").getByRole("button").click();
+  await expect(page.locator(".hero h1")).toHaveText("主动重试后的标题");
+  await expect(page.locator(".site-load-notice")).toHaveCount(0);
+});
+
 test("public copy and hero start before the application module without the API redirect", async ({ page }) => {
   let releaseApplication!: () => void;
   const applicationReady = new Promise<void>(resolve => { releaseApplication = resolve; });
@@ -143,10 +170,20 @@ test("public navigation and account entry", async ({ page }) => {
   await expect(page.locator(".hero h1")).toBeVisible();
   await page.locator("#site-navigation").getByRole("link", { name: "小镇档案", exact: true }).click();
   await expect(page.locator(".history-hero h1")).toBeVisible();
+  await page.locator("#site-navigation").getByRole("link", { name: "楹雾主页", exact: true }).click();
+  await expect(page.locator(".hero h1")).toBeVisible();
+  await expect(page.locator(".site-initial-load")).toHaveCount(0);
   await page.goto("/account");
   await expect(page.getByRole("heading", { name: "账号登录", exact: true })).toBeVisible();
   await expect(page.locator('input[autocomplete="username"]')).toBeVisible();
   await expect(page.getByRole("button", { name: "登录", exact: true })).toBeVisible();
+  const password = page.getByLabel("密码", { exact: true });
+  await password.fill("test-only-password");
+  await page.getByRole("button", { name: "显示密码", exact: true }).click();
+  await expect(password).toHaveAttribute("type", "text");
+  await page.getByRole("button", { name: "隐藏密码", exact: true }).click();
+  await expect(password).toHaveAttribute("type", "password");
+  await expect(password).toHaveValue("test-only-password");
   await expect(page.getByText("QQ 注册", { exact: true })).toHaveCount(0);
   await page.goto("/map");
   await expect(page.locator("main")).toBeVisible();
@@ -263,6 +300,7 @@ test("map refresh and repeated sign-in preserve the canvas until tile revision c
   await expect(page.locator('[data-revision="1"]')).toHaveCount(1);
   expect(await project!.evaluate(node => node.isConnected)).toBe(true);
   await expect(page.locator(".map-sidebar").getByRole("textbox")).toHaveCount(0);
+  await expect(page.locator(".map-list-pagination")).toHaveCount(0);
   await page.evaluate(() => window.dispatchEvent(new Event("replace-map")));
   await expect.poll(() => original!.evaluate(node => node.isConnected)).toBe(false);
   await expect(canvas).toHaveCount(1);

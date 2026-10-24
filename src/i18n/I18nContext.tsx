@@ -9,6 +9,7 @@ import {
   type ReactNode
 } from "react";
 import { defaultContent } from "../domain/defaults";
+import { visualConfig } from "../domain/visualConfig";
 import { PageLoading } from "../components/TerrainLoading";
 import { Notice } from "../components/RetryNotice";
 import { Button } from "../components/Button";
@@ -70,7 +71,14 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    void reloadContent().catch(() => undefined);
+    // 首屏文案限时等待；超时后保留默认文案，迟到的结果由主动重试接收。
+    const timer = window.setTimeout(() => {
+      contentRevision.current += 1;
+      setContentUnavailable(true);
+      setReady(true);
+    }, visualConfig.initialContentWaitMilliseconds);
+    void reloadContent().catch(() => undefined).finally(() => window.clearTimeout(timer));
+    return () => window.clearTimeout(timer);
   }, [reloadContent]);
 
   useEffect(() => {

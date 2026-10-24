@@ -1,6 +1,6 @@
 import { Notice } from "../components/RetryNotice";
 import { Button } from "../components/Button";
-import { LockKeyhole, LogIn, LogOut, UserRound } from "lucide-react";
+import { Eye, EyeOff, LockKeyhole, LogIn, LogOut, UserRound } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { MemberAvatar } from "../components/MemberDirectory";
@@ -21,6 +21,7 @@ export function AccountPage() {
   const location = useLocation();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [busy, setBusy] = useState(false);
   const [errorKey, setErrorKey] = useState<ReturnType<typeof getErrorTranslationKey> | null>(null);
   const [linkedMember, setLinkedMember] = useState<TownMember | null>(null);
@@ -81,7 +82,15 @@ export function AccountPage() {
         {!isSupabaseConfigured ? <Notice>{t("auth.notConfigured")}</Notice> : null}
         <form className="form-stack" onSubmit={submit}>
           <label>{t("auth.username")}<input autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} required /></label>
-          <label>{t("auth.password")}<input type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required /></label>
+          <div className="form-field">
+            <label htmlFor="login-password">{t("auth.password")}</label>
+            <div className="password-input">
+              <input id="login-password" type={passwordVisible ? "text" : "password"} autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required />
+              <button type="button" className="icon-button" aria-label={t(passwordVisible ? "auth.hidePassword" : "auth.showPassword")} aria-controls="login-password" onClick={() => setPasswordVisible(value => !value)}>
+                {passwordVisible ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
+          </div>
           {errorKey ? <Notice>{t(errorKey)}</Notice> : null}
           <Button type="submit" className="primary" disabled={busy || !isSupabaseConfigured}><LogIn size={17} />{t(busy ? "auth.submitting" : "auth.submit")}</Button>
         </form>

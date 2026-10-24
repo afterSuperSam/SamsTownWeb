@@ -1,10 +1,7 @@
 import { z } from "zod";
 
-export const usernameSchema = z.string()
-  .trim()
-  .min(2)
-  .max(32)
-  .regex(/^[\p{L}\p{N}_-]+$/u);
+// 与改名 RPC 一致：按 Unicode 字符计数，只接受字母、十进制数字和 _-。
+export const usernameSchema = z.string().trim().regex(/^[\p{L}\p{Nd}_-]{2,32}$/u);
 
 export const accountPasswordSchema = z.string().min(10).max(256);
 

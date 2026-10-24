@@ -109,6 +109,7 @@ pnpm dlx supabase@2.109.1 migration fetch --linked --workdir $migrationWorkspace
 if ($LASTEXITCODE) { throw '读取迁移基线失败' }
 # 当前版本的增量；已应用时同名文件不会再次执行。
 Copy-Item supabase/migrations/20261022124444_audit_integrity_fixes.sql "$migrationWorkspace/supabase/migrations/"
+Copy-Item supabase/migrations/20261024061030_align_upload_limits_and_usernames.sql "$migrationWorkspace/supabase/migrations/"
 pnpm dlx supabase@2.109.1 db push --linked --dry-run --workdir $migrationWorkspace
 if ($LASTEXITCODE) { throw '迁移预演失败' }
 ```
@@ -237,7 +238,7 @@ server {
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options SAMEORIGIN always;
     add_header Referrer-Policy strict-origin-when-cross-origin always;
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co; frame-src https://wj.qq.com https://player.bilibili.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co; frame-src https://player.bilibili.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'" always;
     location / { try_files $uri $uri/ /index.html; }
     location = /index.html { expires -1; }
     location /assets/ { expires 1y; try_files $uri =404; }
@@ -267,6 +268,8 @@ curl --fail https://moesam.com/health
 
 ## 更新、回滚与排错
 
+已有站点需同步上面的 CSP：删除已停用的问卷与 Google Fonts 域名，保留 Bilibili 播放器。替换站点配置中的对应响应头后，运行 `sudo nginx -t && sudo systemctl reload nginx`，再用 `curl -I https://moesam.com/` 确认；只上传前端不会更新 Nginx 响应头。
+
 更新：在开发机固定新提交，按第 3 节盘点数据库、第 4 节构建和上传；在服务器安装生产依赖。记录 `readlink -f /opt/samstownweb/current` 的旧路径，不覆盖旧 release。确认 `$RELEASE` 指向本次已验证的新目录后：
 
 ```bash
@@ -286,12 +289,14 @@ v2.2.0 需同步应用 `20261020041649_simplify_roles_and_map_projects.sql`：�
 
 v2.2.1 依赖 `20261022124444_audit_integrity_fixes.sql`。先完成迁移，再切换本次前后端；它新增快照／冲突检查、会话失效判据、Storage 归属转移和事务清理队列，不清空业务数据。旧地图提交签名保留，避免共享数据库在切换 API 前中断旧版本。账号重置后的旧会话将被拒绝；服务端请求超时默认为 15 秒，可通过 `SUPABASE_REQUEST_TIMEOUT_MS` 调整。
 
+v2.2.5 按上述导入基线流程应用 `20261024061030_align_upload_limits_and_usernames.sql`，再更新前后端。迁移统一用户名字符规则、将 `site-images` 上限设为 52428800 字节（50MiB），并删除三条退役游戏表的宽松策略；保留账号、图片和游戏表数据。Storage 全局上限须至少为 50MiB，Fastify 的 `SITE_IMAGE_MAX_BYTES` 默认相同，Nginx 的 52m 额外容纳 multipart 请求头，不代表单张图片可以上传 52MiB。
+
 回滚：将 `current` 指回已保留且兼容当前数据库的旧 release，重启 API。代码回滚不能撤销破坏性数据库迁移。
 
 - API 失败：`systemctl status samstownweb-api --no-pager`、`journalctl -u samstownweb-api -n 80 --no-pager`。
 - 登录／后台失败：先检查 `/health`、当前服务工作目录、生产变量及数据库 RLS；不要打印密钥。
 - 页面旧版：检查 Nginx root、`current`、浏览器缓存；`VITE_*` 改后重新构建。
-- 上传失败：核对 52m Nginx 限制、Fastify 文件与解码限制、Storage policy。
+- 上传失败：核对 Nginx 52m 请求限制、Fastify 与 Storage 50MiB 文件限制、图片解码限制和 Storage policy。
 - 地图提交或密码重置结果不明：先重新读取当前状态并检查 API 日志，不手工删除切片或恢复旧会话；未知提交结果会保留文件，避免破坏已经成功的操作。
 - 清理旧 release 前先核对其绝对路径和回滚用途；产物目录不是 Git worktree，不要清空 releases 根目录。
 

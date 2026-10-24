@@ -89,6 +89,15 @@ export const MapViewport = forwardRef<MapViewportHandle, MapViewportProps>(funct
 
   function handleKeyboard(event: React.KeyboardEvent<HTMLDivElement>) {
     if (event.target !== event.currentTarget) return;
+    if (["+", "=", "-"].includes(event.key)) {
+      event.preventDefault();
+      const viewer = viewerRef.current;
+      if (viewer) {
+        viewer.viewport.zoomBy(event.key === "-" ? 1 / atlasConfig.keyboardZoomFactor : atlasConfig.keyboardZoomFactor);
+        viewer.viewport.applyConstraints();
+      }
+      return;
+    }
     const current = keyboardCell ?? {
       column: Math.floor(props.map.imageWidth / CHUNK_SIZE / 2),
       row: Math.floor(props.map.imageHeight / CHUNK_SIZE / 2)

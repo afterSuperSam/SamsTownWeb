@@ -1,26 +1,53 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation } from "react-router";
 import { visualConfig } from "../domain/visualConfig";
+import { formatTranslation } from "../i18n/translations";
 import { SignatureDrawing, townSignatureLetters, writeSignature } from "./SignatureDrawing";
 
-const InitialLoadingContext = createContext<() => void>(() => undefined);
-export const useInitialHomeLoading = () => useContext(InitialLoadingContext);
+const LoadingContext = createContext({ reportReady: (): void => undefined, trackPage: (): (() => void) => () => undefined });
+export const useInitialHomeLoading = () => useContext(LoadingContext).reportReady;
 
 // 加载层独立于身份、文案和页面边界，整个首屏只挂载一次。
 export function InitialHomeLoading({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const [visible, setVisible] = useState(pathname === "/");
   const [ready, setReady] = useState(false);
+  const [pendingPages, setPendingPages] = useState(0);
   const reportReady = useCallback(() => setReady(true), []);
   const finish = useCallback(() => setVisible(false), []);
+  const trackPage = useCallback(() => {
+    setPendingPages(count => count + 1);
+    return () => setPendingPages(count => count - 1);
+  }, []);
+  const loadingActions = useMemo(() => ({ reportReady, trackPage }), [reportReady, trackPage]);
   const active = visible && pathname === "/";
 
-  return <InitialLoadingContext.Provider value={reportReady}>
+  return <LoadingContext.Provider value={loadingActions}>
     <div className="initial-home-content" data-loading={active || undefined} inert={active}>
       {children}
     </div>
     {active && <LoadingSignature ready={ready} onComplete={finish} />}
-  </InitialLoadingContext.Provider>;
+    <LoadingMessage pending={(active && !ready) || pendingPages > 0} initial={active} />
+  </LoadingContext.Provider>;
+}
+
+// 提示留在页面边界外，加载结束后独立淡出，不延迟内容显示。
+function LoadingMessage({ pending, initial }: { pending: boolean; initial: boolean }) {
+  const [visible, setVisible] = useState(false);
+  const settings = visualConfig.loadingMessage;
+  useEffect(() => {
+    const timer = window.setTimeout(() => setVisible(pending),
+      pending ? settings.delayMilliseconds : visualConfig.loadingSignature.exitMilliseconds);
+    return () => window.clearTimeout(timer);
+  }, [pending, settings.delayMilliseconds]);
+  const message = formatTranslation("app.loading.pending", document.documentElement.lang === "en" ? "en" : "zh-CN");
+  return <div className="loading-message" role="status" aria-label={message} aria-hidden={!visible || !pending}
+    data-visible={visible && pending || undefined} data-initial={initial || undefined}
+    style={{ "--loading-message-exit": `${visualConfig.loadingSignature.exitMilliseconds}ms`,
+      "--loading-character-duration": `${settings.characterMilliseconds}ms` } as CSSProperties}>
+    {visible && Array.from(message, (character, index) => <span key={index} aria-hidden="true"
+      style={{ animationDelay: `${index * settings.characterStaggerMilliseconds}ms` }}>{character}</span>)}
+  </div>;
 }
 
 // 固定时间连续写完；数据仍在加载时保留完整签名，不重播、不逐帧更新 React。
@@ -101,7 +128,9 @@ function LoadingSignature({ ready, onComplete }: { ready: boolean; onComplete: (
   </div>;
 }
 
-// 页面切换只保留占位；全屏动画由首屏边界统一处理。
+// 各页面只上报等待；超时提示由同一边界显示，卸载后仍能完成淡出。
 export function PageLoading({ label }: { label: string }) {
+  const { trackPage } = useContext(LoadingContext);
+  useEffect(trackPage, [trackPage]);
   return <div className="page-pending" role="status" aria-label={label} />;
 }

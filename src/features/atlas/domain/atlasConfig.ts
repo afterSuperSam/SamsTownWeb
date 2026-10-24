@@ -9,11 +9,12 @@ export const atlasConfig = z.object({
   exactImageZoom: z.number().positive(),
   refreshDelay: z.number().int().min(0).max(1000),
   claimLabelScreenSize: z.number().int().min(10).max(24),
+  keyboardZoomFactor: z.number().gt(1).max(2),
   noticeDuration: z.number().int().positive()
 }).parse({
   pageSize: 1000, listPageSize: 30, refreshDelay: 120,
   exactCellLimit: 16384, bufferChunks: 4, exactImageZoom: .55,
-  claimLabelScreenSize: 13, noticeDuration: 3600
+  claimLabelScreenSize: 13, keyboardZoomFactor: 1.25, noticeDuration: 3600
 });
 
 export interface ChunkBounds {

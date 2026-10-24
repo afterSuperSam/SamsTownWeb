@@ -3,7 +3,13 @@ import { z } from "zod";
 // 视觉交互参数集中校验；主题和背景强度仍由 global.css 变量管理。
 const visualConfigSchema = z.object({
   homeBlogPostLimit: z.number().int().min(1).max(3),
+  initialContentWaitMilliseconds: z.number().int().positive(),
   heroDecodeTimeoutMilliseconds: z.number().int().positive(),
+  loadingMessage: z.object({
+    delayMilliseconds: z.number().int().positive(),
+    characterMilliseconds: z.number().int().positive(),
+    characterStaggerMilliseconds: z.number().int().nonnegative()
+  }),
   loadingSignature: z.object({
     continuous: z.boolean(),
     durationMilliseconds: z.number().int().positive(),
@@ -58,7 +64,9 @@ const visualConfigSchema = z.object({
 
 export const visualConfig = visualConfigSchema.parse({
   homeBlogPostLimit: 1,
+  initialContentWaitMilliseconds: 3_000,
   heroDecodeTimeoutMilliseconds: 1_500,
+  loadingMessage: { delayMilliseconds: 2500, characterMilliseconds: 420, characterStaggerMilliseconds: 70 },
   loadingSignature: {
     durationMilliseconds: 1600, strokePauseMilliseconds: 0, easing: "cubic-bezier(.55,0,1,1)",
     continuous: true,

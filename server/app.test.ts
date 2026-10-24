@@ -368,6 +368,14 @@ describe("security and concurrency", () => {
     expect(identity.maskedIp).toBe("198.51.100.*");
     expect(identity.digest).toMatch(/^[a-f0-9]{64}$/);
   });
+  it("uses Unicode letters and decimal digits consistently for usernames", () => {
+    for (const name of ["Player_1", "楹雾", "Éclair", "玩家１", "𠀀".repeat(32)]) {
+      expect.soft(usernameSchema.safeParse(name).success, name).toBe(true);
+    }
+    for (const name of ["User²", "UserⅧ", "User😀", "User name", "a", "𠀀".repeat(33)]) {
+      expect.soft(usernameSchema.safeParse(name).success, name).toBe(false);
+    }
+  });
   it("blocks lookalike Bilibili hosts and untrusted short-link redirects", async () => {
     expect(extractBvid("BV1B7411m7LV")).toBe("BV1B7411m7LV");
     expect(() => extractBvid("https://bilibili.com.evil.test/video/BV1B7411m7LV")).toThrow();
