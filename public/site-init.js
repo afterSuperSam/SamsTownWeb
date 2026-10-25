@@ -15,20 +15,20 @@
   document.querySelector('meta[name="theme-color"]')
     ?.setAttribute("content", theme === "light" ? "#eee2cb" : "#211c18");
 
-  // 公开资料与应用包并行下载；头图直接取 Storage，不绕行 Fastify。
+  // 公开资料与应用包并行下载；同域缓存与本地头图不依赖访客的跨境链路。
   const area = location.pathname === "/" ? "hero" : location.pathname.replace(/\/$/, "") === "/history" ? "history" : null;
   if (settings.supabaseUrl?.startsWith("https://") && settings.anonKey && !settings.anonKey.startsWith("%")) {
-    const read = path => fetch(`${settings.supabaseUrl.replace(/\/$/, "")}/rest/v1/${path}`, {
-      headers: { apikey: settings.anonKey }, signal: AbortSignal.timeout(15000)
+    const read = resource => fetch(`/api/site/public/${resource}`, {
+      signal: AbortSignal.timeout(Number(settings.timeoutMs))
     }).then(response => {
       if (!response.ok) throw new Error("error.contentUnavailable");
       return response.json();
     });
-    window.__yingwuContent = read("site_content?select=content&id=eq.1").then(rows => rows[0]?.content);
+    window.__yingwuContent = read("content");
     // 请求结果由 repository 接管；应用启动前的失败也不会成为未处理异常。
     window.__yingwuContent.catch(() => {});
     if (area) {
-      window.__yingwuImages = read("town_images?select=*&is_visible=eq.true&order=sort_order.asc,id.asc");
+      window.__yingwuImages = read("images");
       window.__yingwuImages.then(images => {
         const hero = images.find(image => image.area === area && image.media_type === "image");
         if (!hero) return;

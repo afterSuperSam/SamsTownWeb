@@ -1,5 +1,25 @@
 import { expect, test } from "@playwright/test";
 
+test("slow public copy never blocks the homepage or changes its animation timing", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.route("**/src/services/siteRepository.ts*", route => route.fulfill({ contentType: "application/javascript", body: `
+    export const getSiteContent = () => new Promise(() => {});
+    export const preloadHomeData = () => {};
+    export const getBlogPosts = async () => [];
+    export const getHomeData = () => ({ images: Promise.resolve([]), members: Promise.resolve([]), faqs: Promise.resolve([]) });
+  ` }));
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await expect(page.locator(".hero h1")).toBeVisible({ timeout: 1500 });
+  await expect(page.locator(".site-initial-load")).toHaveCount(0);
+  const settings = await page.evaluate(async () => {
+    const moduleUrl = "/src/domain/visualConfig.ts";
+    const { visualConfig } = await import(/* @vite-ignore */ moduleUrl);
+    return visualConfig.loadingSignature;
+  });
+  expect(settings.durationMilliseconds).toBe(1600);
+  expect(settings.exitMilliseconds).toBe(500);
+});
+
 test("homepage hero opens while secondary data is still pending", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -69,12 +89,13 @@ test("mobile hero stays centered and late fonts do not change visible lettering"
   }
 });
 
-test("public copy and hero start before the application module without the API redirect", async ({ page }) => {
+test("same-origin copy and hero start before the application module without a Supabase request", async ({ page }) => {
   let releaseApplication!: () => void;
   const applicationReady = new Promise<void>(resolve => { releaseApplication = resolve; });
   let copyRequested = false;
   let heroRequested = false;
   let heroRedirects = 0;
+  let externalRequests = 0;
   await page.route("http://127.0.0.1:5174/", async route => {
     const response = await route.fetch();
     const html = (await response.text()).replace(/data-supabase-url="[^"]*"/, 'data-supabase-url="https://fixture.supabase.co"')
@@ -82,16 +103,17 @@ test("public copy and hero start before the application module without the API r
     await route.fulfill({ response, body: html });
   });
   await page.route("**/src/main.tsx*", async route => { await applicationReady; await route.continue(); });
-  await page.route("https://fixture.supabase.co/rest/v1/site_content?**", route => {
+  await page.route("https://fixture.supabase.co/**", route => { externalRequests += 1; return route.abort(); });
+  await page.route("**/api/site/public/content", route => {
     copyRequested = true;
-    return route.fulfill({ json: [{ content: { translations: {}, settings: {} } }] });
+    return route.fulfill({ json: { translations: {}, settings: {} } });
   });
-  await page.route("https://fixture.supabase.co/rest/v1/town_images?**", route => route.fulfill({ json: [{
+  await page.route("**/api/site/public/images", route => route.fulfill({ json: [{
     id: "early-hero", area: "hero", media_type: "image", is_visible: true,
-    source_url: "https://fixture.supabase.co/storage/v1/object/public/site-images/hero/fixture.display/1080.webp"
+    source_url: `/api/site/media/${"a".repeat(64)}.webp`
   }] }));
   await page.route("**/api/site/hero?**", route => { heroRedirects += 1; return route.abort(); });
-  await page.route("**/storage/v1/object/public/site-images/hero/**", route => {
+  await page.route("**/api/site/media/**", route => {
     heroRequested = true;
     return route.fulfill({ contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" />' });
   });
@@ -100,6 +122,7 @@ test("public copy and hero start before the application module without the API r
     await expect.poll(() => copyRequested).toBe(true);
     await expect.poll(() => heroRequested).toBe(true);
     expect(heroRedirects).toBe(0);
+    expect(externalRequests).toBe(0);
   } finally {
     releaseApplication();
   }

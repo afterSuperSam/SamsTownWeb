@@ -11,6 +11,7 @@ import { bilibiliRoutes } from "./routes/bilibili.js";
 import { blogRoutes } from "./routes/blog.js";
 import { mapRoutes } from "./routes/maps.js";
 import { imageRoutes } from "./routes/images.js";
+import { publicSiteRoutes } from "./routes/publicSite.js";
 import { registerStorageCleanup } from "./storageCleanup.js";
 
 export async function buildApp(options: { logger?: boolean; startWorkers?: boolean } = {}) {
@@ -49,6 +50,7 @@ export async function buildApp(options: { logger?: boolean; startWorkers?: boole
   await app.register(blogRoutes);
   await app.register(mapRoutes);
   await app.register(imageRoutes);
+  await app.register(publicSiteRoutes, { warm: options.startWorkers !== false });
   if (options.startWorkers !== false) {
     registerStorageCleanup(app);
     registerAccountCleanup(app);

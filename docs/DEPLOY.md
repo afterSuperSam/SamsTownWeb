@@ -84,6 +84,12 @@ pnpm dlx supabase@2.109.1 gen types typescript --linked > src/lib/database.types
 
 ### 图片优化与首屏
 
+v2.2.5 无需数据库迁移，前后端必须一起更新。新增 `/api/site/public/{content,images,members,faqs}` 和 `/api/site/media/<hash>.webp`，继续由现有 `/api/` 反代转发；旧 `/api/site/hero` 保留兼容但首屏不再使用。公开缓存使用 `SITE_PUBLIC_KEY`（未设置时读取 `VITE_SUPABASE_ANON_KEY`），只执行固定匿名 GET，不能填写 service-role/secret 密钥。
+
+在 `/etc/samstownweb.env` 设置 `SITE_PUBLIC_CACHE_DIR=/var/lib/samstownweb/public-site`。systemd 服务增加 `StateDirectory=samstownweb`，让受 `ProtectSystem=strict` 保护的进程仅在自己的状态目录写入。缓存按原子写持久化，切换 release 不清空。资料默认 30 秒刷新、故障最多使用 5 分钟旧结果；头图只镜像当前 Supabase 项目 `site-images` 公开桶里的 WebP。先预热四个公开接口及头图再切换静态文件，不上传 `.env` 或 Windows 依赖。回退时切回前一 release，状态目录可保留；不覆盖云端数据。
+
+`site-init.js` 与应用共用同域缓存和同一头图 URL；开发环境 Vite 把这些公开路径转发至本地 8787。默认文案立即挂载，签名结束后不自动接收迟到文案，使用页面重试按钮恢复；1600 ms 签名与 500 ms 淡出保持不变。
+
 v2.2.2 的图片与首屏优化不需要新迁移。部署时先更新 Fastify，再更新前端，确保 `/api/site/hero` 和 `/api/site/images` 可用；不要仅上传静态文件。Nginx 应启用下文的 gzip 与静态图片缓存，WebP 无需再次 gzip。`SITE_IMAGE_WEBP_QUALITY` 默认 90；上传请求等待时间由 `VITE_IMAGE_UPLOAD_TIMEOUT_MS` 控制，默认 120 秒。
 
 v2.2.3 在上述后端不变的基础上更新前端，无需迁移。完整替换 `dist`，保留其中的 `site-init.js`，它替代旧的 `theme-init.js` 和 `hero-preload.js`。该脚本必须随版本重新验证缓存，不应设置一年缓存。文案和媒体直接通过 Supabase 公开只读 API 预取，头图不再依赖 Fastify 地址查询；构建时的 `VITE_SUPABASE_URL`、`VITE_SUPABASE_ANON_KEY` 必须正确，不能填入服务端密钥。无需 Google Fonts 域名；正文使用本机字体。

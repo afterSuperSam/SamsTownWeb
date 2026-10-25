@@ -38,6 +38,19 @@ export const config = z.object({
   SITE_IMAGE_WEBP_QUALITY: z.coerce.number().int().min(75).max(100).default(90),
   SITE_IMAGE_CACHE_SECONDS: z.coerce.number().int().positive().default(31_536_000),
   SITE_HERO_CACHE_MS: z.coerce.number().int().positive().default(30_000),
+  SITE_PUBLIC_KEY: z.preprocess(value => value ?? process.env.VITE_SUPABASE_ANON_KEY,
+    z.string().min(20).refine(value => {
+      if (value.startsWith("sb_publishable_")) return true;
+      try { return JSON.parse(Buffer.from(value.split(".")[1], "base64url").toString("utf8")).role === "anon"; }
+      catch { return false; }
+    }, "SITE_PUBLIC_KEY must be a publishable or legacy anon key").optional()),
+  SITE_PUBLIC_CACHE_DIR: z.string().min(1).default("./.cache/public-site"),
+  SITE_PUBLIC_CACHE_MS: z.coerce.number().int().min(1_000).default(30_000),
+  SITE_PUBLIC_STALE_MS: z.coerce.number().int().min(1_000).default(300_000),
+  SITE_PUBLIC_RETRY_MS: z.coerce.number().int().min(1_000).default(5_000),
+  SITE_PUBLIC_TIMEOUT_MS: z.coerce.number().int().min(100).max(30_000).default(5_000),
+  SITE_PUBLIC_MAX_BYTES: z.coerce.number().int().positive().default(1_048_576),
+  SITE_PUBLIC_MEDIA_MAX_BYTES: z.coerce.number().int().positive().default(5_242_880),
   SITE_IMAGE_SIZES: z.object({ hero: z.tuple([z.number().positive(), z.number().positive()]), content: z.tuple([z.number().positive(), z.number().positive()]) })
     .default({ hero: [1920, 1080], content: [1280, 720] }),
   BILIBILI_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
@@ -52,6 +65,9 @@ export const config = z.object({
   ACCOUNT_CLEANUP_INTERVAL_MS: z.coerce.number().int().min(30_000).default(300_000),
   ANALYTICS_IP_PEPPER: z.string().min(32).optional()
 }).superRefine((values, context) => {
+  if (values.SITE_PUBLIC_STALE_MS < values.SITE_PUBLIC_CACHE_MS) {
+    context.addIssue({ code: "custom", path: ["SITE_PUBLIC_STALE_MS"], message: "SITE_PUBLIC_STALE_MS must be at least SITE_PUBLIC_CACHE_MS" });
+  }
   if (values.STORAGE_CLEANUP_RETRY_MAX_MS < values.STORAGE_CLEANUP_RETRY_BASE_MS) {
     context.addIssue({
       code: "custom",

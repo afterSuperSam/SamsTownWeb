@@ -9,11 +9,11 @@ import {
   type ReactNode
 } from "react";
 import { defaultContent } from "../domain/defaults";
-import { PageLoading } from "../components/TerrainLoading";
 import { Notice } from "../components/RetryNotice";
 import { Button } from "../components/Button";
 import type { Language, SiteContent } from "../domain/types";
 import { getSiteContent } from "../services/siteRepository";
+import { visualConfig } from "../domain/visualConfig";
 import {
   formatTranslation,
   type TranslationKey,
@@ -70,7 +70,14 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    void reloadContent().catch(() => undefined);
+    // 默认文案立即挂载；签名写完后不再自动替换可见文字，改由用户主动重试。
+    const deadline = window.setTimeout(() => {
+      contentRevision.current += 1;
+      setContentUnavailable(true);
+      setReady(true);
+    }, visualConfig.loadingSignature.durationMilliseconds);
+    void reloadContent().catch(() => undefined).finally(() => window.clearTimeout(deadline));
+    return () => window.clearTimeout(deadline);
   }, [reloadContent]);
 
   useEffect(() => {
@@ -124,7 +131,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
         {t("app.contentUnavailable")}
         <Button className="small" onClick={() => { void reloadContent().catch(() => undefined); }}>{t("app.retry")}</Button>
       </Notice> : null}
-      {ready ? children : <PageLoading label={formatTranslation("app.loading.terrain", language)} />}
+      {children}
     </I18nContext.Provider>
   );
 }

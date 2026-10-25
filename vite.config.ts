@@ -38,6 +38,7 @@ export default defineConfig({
       }
     }
   },
-  server: { host: "127.0.0.1", port: 5173, strictPort: true },
+  server: { host: "127.0.0.1", port: 5173, strictPort: true,
+    proxy: { "/api/site/public/": "http://127.0.0.1:8787", "/api/site/media/": "http://127.0.0.1:8787" } },
   preview: { host: "127.0.0.1", port: 5173, strictPort: true }
 });

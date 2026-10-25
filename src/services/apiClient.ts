@@ -2,7 +2,7 @@ import { env } from "../lib/env";
 import { supabase } from "../lib/supabase";
 
 // 请求统一处理会话、请求头、取消、超时和错误码。
-async function request<T>(path: string, init: RequestInit, sessionMode: "none" | "optional" | "required" = "none", timeoutMs = env.VITE_API_TIMEOUT_MS): Promise<T> {
+async function request<T>(path: string, init: RequestInit, sessionMode: "none" | "optional" | "required" = "none", timeoutMs = env.VITE_API_TIMEOUT_MS, baseUrl = env.VITE_API_URL): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
   if (sessionMode !== "none") {
@@ -19,7 +19,7 @@ async function request<T>(path: string, init: RequestInit, sessionMode: "none" |
   if (init.signal?.aborted) abortFromCaller();
   const timeout = globalThis.setTimeout(() => controller.abort("timeout"), timeoutMs);
   try {
-    response = await fetch(`${env.VITE_API_URL}${path}`, { ...init, headers, signal: controller.signal });
+    response = await fetch(`${baseUrl}${path}`, { ...init, headers, signal: controller.signal });
     if (response.status !== 204) {
       payload = await response.json().catch(error => {
         if (response.ok || controller.signal.aborted) throw error;
@@ -44,6 +44,12 @@ async function request<T>(path: string, init: RequestInit, sessionMode: "none" |
 
 export function publicApiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   return request<T>(path, init);
+}
+
+// 公开首页资料始终同域读取，不等待会话，也不把访客带到数据库域名。
+export function publicSiteRequest<T>(resource: "content" | "images" | "members" | "faqs"): Promise<T> {
+  const origin = typeof window !== "undefined" ? window.location.origin : env.VITE_API_URL;
+  return request<T>(`/api/site/public/${resource}`, {}, "none", env.VITE_API_TIMEOUT_MS, origin);
 }
 
 export function sessionAwareApiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {

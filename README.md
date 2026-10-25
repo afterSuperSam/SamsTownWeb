@@ -60,6 +60,9 @@ pnpm test:e2e
 
 ## 部署与安全
 
+- v2.2.5 将公开文案、可见媒体、首页成员与 FAQ 改为同域缓存读取；首页和档案头图在服务器镜像，不再让访客为首屏直接访问 Supabase。默认资料缓存 30 秒、上游故障最多回退 5 分钟，恢复后后台刷新。后台编辑仍直接读取完整新数据；数据库、账号和原图不变。
+- 同次发布把 Zod 固定为 4.6.6、fast-uri 覆盖为 3.1.9 / 4.2.3，修复发布审计发现的内存耗尽及 URI 解析安全公告；没有引入新依赖。
+- 默认文案立即挂载，首屏不再等待文案请求。签名仍为 1600 ms、退出淡出仍为 500 ms；超时文案由重试按钮接收，避免页面显示后突然换字。部署需设置独立可写的 `SITE_PUBLIC_CACHE_DIR`，见 DEPLOY。
 - v2.2.4 将 Fastify 固定到 5.12.6，并将传递依赖 ip-address 覆盖为 10.7.4，修复请求头校验与 IPv6 区域标识解析安全问题；无新增迁移或功能变化。
 - Ubuntu / Nginx / systemd；环境文件放 `/etc/samstownweb.env`，运行版本由 `/opt/samstownweb/current` 指向，服务名 `samstownweb-api`。
 - 2GB 新服务器采用本机构建 `dist/`、`dist-server/`，服务器保留同一提交的 `package.json`、`pnpm-lock.yaml`、`pnpm-workspace.yaml`，执行 `pnpm install --prod --frozen-lockfile`。不要删除开发依赖声明或重新生成生产锁文件，也不要在生产机跑完整检查。
