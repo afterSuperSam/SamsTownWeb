@@ -38,12 +38,11 @@ export const config = z.object({
   SITE_IMAGE_WEBP_QUALITY: z.coerce.number().int().min(75).max(100).default(90),
   SITE_IMAGE_CACHE_SECONDS: z.coerce.number().int().positive().default(31_536_000),
   SITE_HERO_CACHE_MS: z.coerce.number().int().positive().default(30_000),
-  SITE_PUBLIC_KEY: z.preprocess(value => value ?? process.env.VITE_SUPABASE_ANON_KEY,
-    z.string().min(20).refine(value => {
+  SITE_PUBLIC_KEY: z.string().min(20).refine(value => {
       if (value.startsWith("sb_publishable_")) return true;
       try { return JSON.parse(Buffer.from(value.split(".")[1], "base64url").toString("utf8")).role === "anon"; }
       catch { return false; }
-    }, "SITE_PUBLIC_KEY must be a publishable or legacy anon key").optional()),
+    }, "SITE_PUBLIC_KEY must be a publishable or legacy anon key").optional(),
   SITE_PUBLIC_CACHE_DIR: z.string().min(1).default("./.cache/public-site"),
   SITE_PUBLIC_CACHE_MS: z.coerce.number().int().min(1_000).default(30_000),
   SITE_PUBLIC_STALE_MS: z.coerce.number().int().min(1_000).default(300_000),
@@ -75,4 +74,4 @@ export const config = z.object({
       message: "STORAGE_CLEANUP_RETRY_MAX_MS must be at least STORAGE_CLEANUP_RETRY_BASE_MS"
     });
   }
-}).parse(process.env);
+}).parse({ ...process.env, SITE_PUBLIC_KEY: process.env.SITE_PUBLIC_KEY ?? process.env.VITE_SUPABASE_ANON_KEY });

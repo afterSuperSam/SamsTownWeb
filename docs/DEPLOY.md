@@ -5,8 +5,8 @@ Ubuntu 24.04；生产域名 `moesam.com`。Nginx 托管前端，Fastify 只监�
 ## 当前 2GB 服务器部署约定
 
 - 本机完成前端与 API 构建，上传 `dist/`、`dist-server/` 及同一提交的 `package.json`、`pnpm-lock.yaml`、`pnpm-workspace.yaml`；不上传 Windows `node_modules` 或明文环境文件。
-- 服务器执行 `pnpm install --prod --frozen-lockfile`，保留原依赖声明与覆盖配置，不重新生成锁文件，以免构建与运行使用不同依赖。
-- 服务器只安装生产依赖。安装任务使用 systemd 临时单元限制 `CPUQuota=50%`、`MemoryMax=448M`，不运行 `release:check`。
+- 本台还运行机器人等服务，不能仅凭进程的 CPU/内存上限判断整机余量足够。2026-10-25 在可用内存约 300MB 时安装依赖，出现整机内存压力及磁盘等待；今后不在这台生产机执行包管理器安装或完整检查。
+- 依赖未变时可核对锁文件后复用已验证的 Linux 依赖；依赖变化时在独立 Linux 构建环境完成 `pnpm install --prod --frozen-lockfile`，保留完整清单/覆盖配置和原生模块，再传输验证过的 Linux 产物。不能上传 Windows 依赖、关闭供应链检查来加速，或悄悄重新生成锁文件。
 - 路径统一 `/opt/samstownweb/releases/<版本>-<日期>`、`/opt/samstownweb/current`、`/etc/samstownweb.env`；服务 `samstownweb-api`。
 - 实际 Supabase 项目以 `.env` 的 URL 为准，必须同时核对 CLI linked 项目，不能把旧项目迁移盘点误当作新项目状态。
 - 新项目保留现有账号及 Storage；不重放初始化、清空或退役脚本。迁移历史时间戳与仓库可能不同，不能盲目 `db push`。

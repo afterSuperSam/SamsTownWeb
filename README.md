@@ -65,7 +65,7 @@ pnpm test:e2e
 - 默认文案立即挂载，首屏不再等待文案请求。签名仍为 1600 ms、退出淡出仍为 500 ms；超时文案由重试按钮接收，避免页面显示后突然换字。部署需设置独立可写的 `SITE_PUBLIC_CACHE_DIR`，见 DEPLOY。
 - v2.2.4 将 Fastify 固定到 5.12.6，并将传递依赖 ip-address 覆盖为 10.7.4，修复请求头校验与 IPv6 区域标识解析安全问题；无新增迁移或功能变化。
 - Ubuntu / Nginx / systemd；环境文件放 `/etc/samstownweb.env`，运行版本由 `/opt/samstownweb/current` 指向，服务名 `samstownweb-api`。
-- 2GB 新服务器采用本机构建 `dist/`、`dist-server/`，服务器保留同一提交的 `package.json`、`pnpm-lock.yaml`、`pnpm-workspace.yaml`，执行 `pnpm install --prod --frozen-lockfile`。不要删除开发依赖声明或重新生成生产锁文件，也不要在生产机跑完整检查。
+- 2GB 服务器采用本机构建 `dist/`、`dist-server/`，保留同一提交的清单和锁文件；依赖未变时复用已验证的 Linux 依赖，变化时在独立 Linux 环境构建后上传。这台生产机不再执行依赖安装或完整检查，避免与机器人争用内存及磁盘；不要上传 Windows 依赖或重新生成生产锁文件。
 - `VITE_*` 会进入浏览器包；Service Role Key 只能用于 Fastify。授权由服务端和数据库 RLS 执行。
 - 账号管理只经 Fastify；完成首次改密后才能通过受控 RPC 改名。改密成功后自动更新会话，当前单 API 进程串行处理改密、重置和删号，避免覆盖账号门禁。
 - 每次发布固定一个提交，在同一 release 中盘点迁移和构建，避免数据库与代码版本错配。

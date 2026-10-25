@@ -35,6 +35,21 @@ afterEach(async () => {
 });
 
 describe("same-origin public site cache", () => {
+  it("loads the real public-key fallback and rejects privileged cache credentials", async () => {
+    vi.stubEnv("SUPABASE_URL", "https://fixture.supabase.co");
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "fixture-service-role-key-for-server-only");
+    vi.stubEnv("VITE_SUPABASE_ANON_KEY", "sb_publishable_fixture-anonymous-key");
+    vi.stubEnv("SITE_PUBLIC_KEY", undefined);
+    try {
+      const actual = await vi.importActual<{ config: { SITE_PUBLIC_KEY?: string } }>("./config.js");
+      expect(actual.config.SITE_PUBLIC_KEY).toBe("sb_publishable_fixture-anonymous-key");
+      vi.stubEnv("SITE_PUBLIC_KEY", "sb_secret_not-a-public-key-for-cache");
+      vi.resetModules();
+      await expect(vi.importActual("./config.js")).rejects.toThrow("SITE_PUBLIC_KEY");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
   it("coalesces anonymous reads and never forwards visitor authorization", async () => {
     let release!: () => void;
     const barrier = new Promise<void>(resolve => { release = resolve; });
