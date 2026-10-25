@@ -14,7 +14,7 @@ import { translations as defaultTranslations, type TranslationKey, type Translat
 import { toJson } from "../lib/json";
 import { env } from "../lib/env";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
-import { authenticatedApiRequest, publicApiRequest } from "./apiClient";
+import { authenticatedApiRequest, publicApiRequest, publicSiteRequest } from "./apiClient";
 import { z } from "zod";
 
 // 博客公告独立于首页资料加载，避免外部站点拖慢首屏。
@@ -97,17 +97,27 @@ function isLocalizedText(value: unknown): value is { "zh-CN": string; en: string
 }
 
 // 只合并同时发生的读取，不长期缓存列表，后台更新后仍能获得新数据。
-export function getSiteContent(): Promise<SiteContent> {
+export function getSiteContent(options: { forEditing?: boolean } = {}): Promise<SiteContent> {
+  if (options.forEditing) return loadSiteContent(true);
   return contentRequest ??= loadSiteContent().finally(() => { contentRequest = null; });
 }
 
-async function loadSiteContent(): Promise<SiteContent> {
+async function loadSiteContent(forEditing = false): Promise<SiteContent> {
   if (!isSupabaseConfigured) return structuredClone(defaultContent);
-  const initialContent = typeof window !== "undefined" ? window.__yingwuContent : undefined;
+  const initialContent = !forEditing && typeof window !== "undefined" ? window.__yingwuContent : undefined;
   if (initialContent) {
     delete window.__yingwuContent;
     cachedSiteContent = normalizeSiteContent(await initialContent);
     return structuredClone(cachedSiteContent);
+  }
+  if (!forEditing) {
+    try {
+      cachedSiteContent = normalizeSiteContent(await publicSiteRequest("content"));
+      return structuredClone(cachedSiteContent);
+    } catch (error) {
+      cachedSiteContent ??= structuredClone(defaultContent);
+      throw error;
+    }
   }
   const { data, error } = await supabase.from("site_content").select("content").eq("id", 1).maybeSingle();
   if (error) {
@@ -133,6 +143,7 @@ async function loadTownImages(forDisplay: boolean): Promise<TownImage[]> {
     delete window.__yingwuImages;
     return (await initialImages).map(mapImage);
   }
+  if (forDisplay) return (await publicSiteRequest<Record<string, unknown>[]>("images")).map(mapImage);
   let query = supabase.from("town_images").select("*").order("sort_order").order("id");
   if (forDisplay) query = query.eq("is_visible", true);
   const { data, error } = await query;
@@ -166,17 +177,14 @@ function loadHomeData() {
   return {
     images: getTownImages({ forDisplay: true }),
     members: getFeaturedMembers(),
-    faqs: isSupabaseConfigured ? readCollection("faq_items").then(rows => rows.map(mapFaq)) : Promise.resolve(defaultFaqs)
+    faqs: isSupabaseConfigured ? publicSiteRequest<Record<string, unknown>[]>("faqs").then(rows => rows.map(mapFaq)) : Promise.resolve(defaultFaqs)
   };
 }
 
 // 首页只取已选成员；完整名单与编辑快照仍走原有读取流程。
 async function getFeaturedMembers(): Promise<TownMember[]> {
   if (!isSupabaseConfigured) return defaultMembers;
-  const { data, error } = await supabase.from("town_members").select("*")
-    .eq("show_on_home", true).order("sort_order").order("id").limit(MAX_HOME_MEMBERS);
-  if (error) throw error;
-  return (data ?? []).map(mapMember);
+  return (await publicSiteRequest<Record<string, unknown>[]>("members")).slice(0, MAX_HOME_MEMBERS).map(mapMember);
 }
 
 // 首页按区域接收数据；非首屏请求不参与头图就绪判断。
@@ -206,7 +214,7 @@ async function loadSiteBundle(options: { refreshContent?: boolean }): Promise<Si
     };
   }
   const [content, members, images, faqRows] = await Promise.all([
-    options.refreshContent ? getSiteContent()
+    options.refreshContent ? getSiteContent({ forEditing: true })
       : cachedSiteContent ?? getSiteContent().catch(() => structuredClone(defaultContent)),
     getTownMembers({ forEditing: options.refreshContent }),
     getTownImages(),

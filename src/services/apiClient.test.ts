@@ -23,13 +23,15 @@ describe("request and media boundaries", () => {
   it("keeps public content available after copy failure without allowing an admin fallback save", async () => {
     const contentError = new Error("site copy unavailable");
     const readContent = vi.fn().mockResolvedValue({ data: null, error: contentError });
+    const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ code: "error.contentUnavailable" }, { status: 503 }));
     mocks.from.mockImplementation(table => table === "site_content"
       ? { select: () => ({ eq: () => ({ maybeSingle: readContent }) }) }
       : { select: () => rowsQuery([]) });
     mocks.rpc.mockResolvedValue({ data: { items: [], revision: "read-version" }, error: null });
     await expect(getSiteBundle()).resolves.toMatchObject({ members: [], images: [], faqs: [], content: { settings: { qqGroup: expect.any(String) } } });
     await getSiteBundle();
-    expect(readContent).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(readContent).not.toHaveBeenCalled();
     await expect(getSiteBundle({ refreshContent: true })).rejects.toBe(contentError);
   });
   it("reads full collections beyond the REST row limit and rejects stale saves", async () => {
@@ -176,32 +178,26 @@ describe("request and media boundaries", () => {
     expect(mocks.from).not.toHaveBeenCalled();
   });
   it("retains completed preloads until the homepage consumes them", async () => {
-    const query = rowsQuery([]);
-    mocks.from.mockReturnValue({ select: () => query });
-    mocks.rpc.mockResolvedValue({ data: { items: [], revision: "fixture" }, error: null });
+    const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json([]));
     preloadHomeData();
     await new Promise(resolve => setTimeout(resolve, 0));
     await Promise.all(Object.values(getHomeData()));
-    expect(mocks.from).toHaveBeenCalledTimes(2);
-    expect(mocks.rpc).toHaveBeenCalledTimes(1);
-    expect(query.eq).toHaveBeenCalledWith("show_on_home", true);
-    expect(query.limit).toHaveBeenCalledWith(4);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(mocks.from).not.toHaveBeenCalled();
+    expect(mocks.rpc).not.toHaveBeenCalled();
   });
   it("exposes homepage images even while member and FAQ requests are pending", async () => {
-    const query = rowsQuery([{ id: "hero", area: "hero", source_url: "hero.webp" }]);
-    const pendingMembers = rowsQuery([]);
-    pendingMembers.limit.mockReturnValue(new Promise(() => {}));
-    mocks.from.mockImplementation(table => ({ select: () => table === "town_members" ? pendingMembers : query }));
-    mocks.rpc.mockReturnValue(new Promise(() => {}));
+    const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async input => String(input).endsWith("/images")
+      ? Response.json([{ id: "hero", area: "hero", source_url: "hero.webp" }]) : new Promise(() => {}));
     const requests = getHomeData();
     await expect(requests.images).resolves.toMatchObject([{ id: "hero" }]);
     preloadHomeData();
     expect(getHomeData()).toBe(requests);
-    expect(mocks.from).toHaveBeenCalledTimes(2);
-    expect(mocks.rpc).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(mocks.from).not.toHaveBeenCalled();
   });
   it("shares early media between public readers without hiding media from the editor", async () => {
-    vi.stubGlobal("window", { __yingwuImages: Promise.resolve([{ id: "early", area: "hero", source_url: "hero.webp" }]) });
+    vi.stubGlobal("window", { location: { origin: "http://fixture.local" }, __yingwuImages: Promise.resolve([{ id: "early", area: "hero", source_url: "hero.webp" }]) });
     const first = getTownImages({ forDisplay: true });
     expect(getTownImages({ forDisplay: true })).toBe(first);
     await expect(first).resolves.toMatchObject([{ id: "early" }]);
@@ -210,16 +206,18 @@ describe("request and media boundaries", () => {
     mocks.from.mockReturnValue({ select: () => query });
     await expect(getTownImages()).resolves.toMatchObject([{ id: "hidden", visible: false }]);
     expect(query.eq).not.toHaveBeenCalled();
+    const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json([]));
     await getTownImages({ forDisplay: true });
-    expect(query.eq).toHaveBeenCalledWith("is_visible", true);
+    expect(fetcher).toHaveBeenCalledWith("http://fixture.local/api/site/public/images", expect.anything());
+    expect(query.eq).not.toHaveBeenCalled();
   });
   it("consumes early public copy once and reads fresh copy for later edits", async () => {
     const early = { translations: {}, settings: { qqGroup: "early" } };
-    vi.stubGlobal("window", { __yingwuContent: Promise.resolve(early) });
+    vi.stubGlobal("window", { location: { origin: "http://fixture.local" }, __yingwuContent: Promise.resolve(early) });
     await expect(getSiteContent()).resolves.toMatchObject(early);
     expect(mocks.from).not.toHaveBeenCalled();
     mocks.from.mockReturnValue({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { content: { settings: { qqGroup: "fresh" } } }, error: null }) }) }) });
-    await expect(getSiteContent()).resolves.toMatchObject({ settings: { qqGroup: "fresh" } });
+    await expect(getSiteContent({ forEditing: true })).resolves.toMatchObject({ settings: { qqGroup: "fresh" } });
     expect(mocks.from).toHaveBeenCalledOnce();
   });
 });

@@ -4,8 +4,9 @@
 
 ```text
 浏览器 ── Nginx ── React 静态文件
-               └─ /api、/health ── Fastify ── Supabase Auth / Storage
-React repository ── Supabase Data API / RPC / Realtime（RLS）
+               └─ /api、/health ── Fastify ── 公开资料缓存 / 本地头图 / 认证与管理
+公开 repository ── 同域 /api/site/public/* ── 匿名 Supabase Data API（RLS）
+编辑、地图与会话 repository ── Supabase Data API / RPC / Realtime（RLS）
 ```
 
 | 目录 | 职责 |
@@ -23,7 +24,11 @@ React repository ── Supabase Data API / RPC / Realtime（RLS）
 
 状态使用 Context 与页面自身状态，不引入额外状态框架。页面不直接拼数据库查询；表字段映射集中于 repository，JSON RPC 在数据边界校验。
 
-图片处理集中在 `server/siteImages.ts`，尺寸与质量由 `server/config.ts` 校验；上传和存量优化脚本共用 Sharp。`storage_path` 始终指原图，展示文件位于 `<storage_path>.display/720.webp`、`1080.webp`，无新增表。`TownImage` 按用途选尺寸，默认懒加载及异步解码。`public/site-init.js` 在 React 前恢复主题，并行读取公开文案和可见媒体，找到当前页头图便直接预取，不经过 Fastify 重定向。公开密钥请求仍依赖 RLS，repository 一次性接管结果并合并并发读取；后台不消费公开预取，独立读取完整最新资料。首页只查询选中的 4 位成员，档案和后台继续读取完整快照；成员、FAQ 不参与头图就绪判断。权限页仍由 ProtectedRoute 等待身份验证。
+图片处理集中在 `server/siteImages.ts`，尺寸与质量由 `server/config.ts` 校验；上传和存量优化脚本共用 Sharp。`storage_path` 始终指原图，展示文件位于 `<storage_path>.display/720.webp`、`1080.webp`，无新增表。`TownImage` 按用途选尺寸，默认懒加载及异步解码。`public/site-init.js` 在 React 前恢复主题，并行请求同域公开文案和可见媒体；repository 接管同一预取结果，后台仍独立读取完整最新资料。首页只查询选中的 4 位成员，档案和后台继续读取完整快照；成员、FAQ 不参与头图就绪判断。权限页仍由 ProtectedRoute 等待身份验证。
+
+公开缓存由 `server/routes/publicSite.ts` 管理：固定匿名查询、30 秒有效期、最长 5 分钟旧结果、并发合并和后台刷新；不转发访客 Authorization，也不降级到管理密钥读取。公开 JSON 快照和当前首页/档案头图镜像在 `SITE_PUBLIC_CACHE_DIR` 原子持久化，切换 release 不清空。镜像只下载本项目公开桶内的 WebP，限时限大小、禁止重定向，客户端取 `/api/site/media/<hash>.webp`；预取、预解码和实际展示使用同一个地址，旧 `/api/site/hero` 重定向不再进入首屏关键路径。其他图片继续懒加载，原件与编辑数据不改。
+
+I18nProvider 立即挂载默认内容，不再等待远端文案。自动接收窗口不超过 `initialContentWaitMilliseconds` 与签名绘制时长的较小值，之后只响应主动重试，避免页面显示后换字；1600 ms 签名与 500 ms 淡出不因缓存或合并而缩短。
 
 ## 核心数据
 
@@ -45,11 +50,12 @@ React repository ── Supabase Data API / RPC / Realtime（RLS）
 | `authService` / `/api/auth/*` | 用户名登录、会话、改密与本人资料 |
 | `adminApi` / `/api/accounts*` | 管理创建和维护账号 |
 | `siteRepository` | 社区内容及媒体，管理完整读取有序集合，并用版本校验防止覆盖他人修改 |
+| `publicSiteRequest` / `/api/site/public/*`、`/api/site/media/*` | 同域公开资料快照和本站头图镜像，匿名固定查询与有界缓存 |
 | `getBlogPosts` / `/api/blog/posts` | 独立加载博客文章，跨站请求由 Fastify 转发 |
 | `mapRepository` / `mapApi` | 地图读取、项目 RPC、`/api/maps*` 上传与管理 |
 | `webDataRepository` | 访问统计和操作日志 |
 
-HTTP JSON 使用 camelCase；数据库 snake_case 在 repository 转换。错误返回 `{ code: "error.*", details? }`；未知错误只在内部记录，浏览器通过翻译表显示产品提示。`GET /health` 返回 `{ ok: true, service: "yingwu-api" }`。
+业务 HTTP JSON 默认使用 camelCase；公开资料缓存保留源字段 snake_case，由同一个 repository 映射器转换，避免预取与后续读取两套规则。错误返回 `{ code: "error.*", details? }`；未知错误只在内部记录，浏览器通过翻译表显示产品提示。`GET /health` 返回 `{ ok: true, service: "yingwu-api" }`。
 
 前端 `can()` 控制展示，Fastify 校验 token 与当前 Profile，数据库 RLS／RPC 执行最终授权。角色取自可信资料，不接受客户端提交的权限。临时密码门禁、限流、上传校验、异步竞态隔离和外部删除补偿都是业务完整性的一部分。
 
