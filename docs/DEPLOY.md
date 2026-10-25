@@ -4,9 +4,9 @@ Ubuntu 24.04；生产域名 `moesam.com`。Nginx 托管前端，Fastify 只监�
 
 ## 版本边界（2026-10-25）
 
-- 生产：v2.2.5 / `a5334de`，已上线同域公开缓存与头图镜像；本次性能补丁不需要数据库迁移。
-- main：v2.3.2 整合版，包含生产性能补丁以及原 main 的账号、地图、加载提示等改动，**本次只合并代码，没有部署 main 或执行迁移**。
-- 以后部署 main 必须核对 `20261024061030_align_upload_limits_and_usernames.sql` 的实际应用状态。不要把“性能补丁无需迁移”误解为“main 的所有变更无需迁移”；也不要重放清空/退役历史。先按第 3 节固定提交、盘点，再决定兼容的切换方案。
+- 发布版本：main v2.3.2 整合版，包含同域性能补丁以及原 main 的账号、地图、加载提示等改动；历史生产基线为 v2.2.5 / `a5334de`。
+- 2026-10-25 发布前只读核验生产迁移历史及实际函数/策略：`20261024061030_align_upload_limits_and_usernames.sql` 已应用，用户名 Unicode 校验已存在、图片上限为 50MiB、三条旧公开策略已移除，因此此次不重复迁移。
+- 新环境或后续版本仍必须先按第 3 节固定提交、盘点；不要把上述核验结论套到其他库，也不要重放清空/退役历史。推送 main 不是部署完成，只有产物、运行版本与访问验证通过后才能更新部署记录。
 
 ## 当前 2GB 服务器部署约定
 
@@ -201,7 +201,7 @@ prepare_release() {
   cd "$RELEASE" || return 1
   PREVIOUS=$(readlink -f /opt/samstownweb/current 2>/dev/null || true)
   if test -n "$PREVIOUS" && test -d "$PREVIOUS/node_modules" \
-    && cmp -s "$PREVIOUS/pnpm-lock.yaml" pnpm-lock.yaml; then
+    && cmp -s <(sed 's/\r$//' "$PREVIOUS/pnpm-lock.yaml") <(sed 's/\r$//' pnpm-lock.yaml); then
     ln -s "$(readlink -f "$PREVIOUS/node_modules")" node_modules || return 1
     echo '已复用同锁文件的 Linux 依赖；其真实目录仍被引用，不可清理。'
   else
@@ -326,7 +326,7 @@ v2.2.0 需同步应用 `20261020041649_simplify_roles_and_map_projects.sql`：�
 
 v2.2.1 依赖 `20261022124444_audit_integrity_fixes.sql`。先完成迁移，再切换本次前后端；它新增快照／冲突检查、会话失效判据、Storage 归属转移和事务清理队列，不清空业务数据。旧地图提交签名保留，避免共享数据库在切换 API 前中断旧版本。账号重置后的旧会话将被拒绝；服务端请求超时默认为 15 秒，可通过 `SUPABASE_REQUEST_TIMEOUT_MS` 调整。
 
-main v2.3.2 首次部署前，按上述导入基线流程核对 `20261024061030_align_upload_limits_and_usernames.sql`，待执行时在独立维护窗口顺序应用，再更新前后端；**此次合并未执行它，生产 v2.2.5 性能补丁也不依赖它**。迁移统一用户名字符规则、将 `site-images` 上限设为 52428800 字节（50MiB），并删除三条退役游戏表的宽松策略；保留账号、图片和游戏表数据。Storage 全局上限须至少为 50MiB，Fastify 的 `SITE_IMAGE_MAX_BYTES` 默认相同，Nginx 的 52m 额外容纳 multipart 请求头，不代表单张图片可以上传 52MiB。
+main v2.3.2 部署前，按上述导入基线流程核对 `20261024061030_align_upload_limits_and_usernames.sql`；已应用就不重跑，只有待执行时才在独立维护窗口顺序应用，再更新前后端。2026-10-25 现有生产库已核验满足，原 v2.2.5 性能补丁本身不依赖此迁移。迁移统一用户名字符规则、将 `site-images` 上限设为 52428800 字节（50MiB），并删除三条退役游戏表的宽松策略；保留账号、图片和游戏表数据。Storage 全局上限须至少为 50MiB，Fastify 的 `SITE_IMAGE_MAX_BYTES` 默认相同，Nginx 的 52m 额外容纳 multipart 请求头，不代表单张图片可以上传 52MiB。
 
 回滚：将 `current` 指回已保留且兼容当前数据库的旧 release，重启 API。代码回滚不能撤销破坏性数据库迁移。
 
